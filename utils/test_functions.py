@@ -83,6 +83,7 @@ def test_gradient_flow(model: nn.Module, config: Any) -> pd.DataFrame:
     vocab_size = getattr(config, 'vocab_size', 50257)
     device = next(model.parameters()).device
 
+    original_mode = model.training  # Preserve original training mode
     model.train()
 
     # Forward + backward
@@ -145,7 +146,7 @@ def test_gradient_flow(model: nn.Module, config: Any) -> pd.DataFrame:
         plt.tight_layout()
         plt.show()
 
-    model.eval()  # Reset to eval mode
+    model.train(original_mode)  # Restore original training mode
     return pd.DataFrame(grad_stats)
 
 
@@ -155,7 +156,11 @@ def test_output_stability(model: nn.Module, config: Any, n_samples: int = 100) -
 
     Tests for NaN, Inf, collapsed outputs, and excessive variance.
     """
-    from scipy.stats import shapiro
+    try:
+        from scipy.stats import shapiro
+    except ImportError:
+        print("⚠️ scipy not installed, skipping normality test")
+        shapiro = None
 
     vocab_size = getattr(config, 'vocab_size', 50257)
     device = next(model.parameters()).device
@@ -196,15 +201,23 @@ def test_output_stability(model: nn.Module, config: Any, n_samples: int = 100) -
         issues.append("⚠️ Large mean bias")
 
     # Normality test (sample 1000 values)
-    sample = outputs.flatten()[:1000].numpy()
-    _, p_value = shapiro(sample)
+    if shapiro is not None:
+        sample = outputs.flatten()[:min(1000, outputs.numel())].numpy()
+        if len(sample) >= 20:
+            _, p_value = shapiro(sample)
+        else:
+            p_value = None
+            print("⚠️ Insufficient samples for normality test")
+    else:
+        p_value = None
 
     print("=" * 60)
     print("OUTPUT STABILITY ANALYSIS")
     print("=" * 60)
     for key, value in stats.items():
         print(f"{key:20s}: {value}")
-    print(f"{'Shapiro-Wilk p':20s}: {p_value:.4f}")
+    if p_value is not None:
+        print(f"{'Shapiro-Wilk p':20s}: {p_value:.4f}")
     print(f"\nStatus: {issues[0] if issues else '✅ PASS'}")
     if len(issues) > 1:
         for issue in issues[1:]:
