@@ -17,6 +17,71 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Any, Dict
 import time
+import numpy as np
+
+
+def _detect_vocab_size(model: nn.Module, config: Any) -> int:
+    """
+    Detect vocabulary size from model or config.
+
+    Priority:
+    1. config.vocab_size (explicit)
+    2. model embedding layer vocab size (introspection)
+    3. Default fallback (50257 for GPT-2 compatibility)
+    """
+    # Try config first
+    if hasattr(config, 'vocab_size') and config.vocab_size is not None:
+        return config.vocab_size
+
+    # Try to detect from model embedding layers
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Embedding):
+            return module.num_embeddings
+
+    # Fallback with warning
+    print("⚠️ Could not detect vocab_size, using default 50257 (GPT-2)")
+    return 50257
+
+
+def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
+    """
+    Safely extract logits tensor from model output.
+
+    Handles multiple output formats:
+    - Direct tensor: return as-is
+    - Tuple: return first element
+    - Dict: return output['logits'] or output['last_hidden_state']
+    - ModelOutput object: return .logits attribute
+    """
+    output = model(input_ids)
+
+    # Direct tensor
+    if isinstance(output, torch.Tensor):
+        return output
+
+    # Tuple (common for models that return multiple outputs)
+    if isinstance(output, tuple):
+        return output[0]
+
+    # Dict
+    if isinstance(output, dict):
+        if 'logits' in output:
+            return output['logits']
+        if 'last_hidden_state' in output:
+            return output['last_hidden_state']
+        # Return first tensor value found
+        for value in output.values():
+            if isinstance(value, torch.Tensor):
+                return value
+
+    # HuggingFace ModelOutput object
+    if hasattr(output, 'logits'):
+        return output.logits
+    if hasattr(output, 'last_hidden_state'):
+        return output.last_hidden_state
+
+    # Fallback - assume it's tensor-like
+    return output
 
 
 def test_shape_robustness(model: nn.Module, config: Any) -> Any:
