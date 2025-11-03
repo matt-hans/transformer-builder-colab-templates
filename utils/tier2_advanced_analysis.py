@@ -12,7 +12,6 @@ These tests provide deeper insights into model behavior beyond basic validation.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 from typing import Any, Dict, List, Optional
 
 

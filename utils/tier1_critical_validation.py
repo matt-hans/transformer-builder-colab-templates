@@ -15,7 +15,6 @@ These tests should pass before proceeding to advanced analysis or training.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 from typing import Any, Dict
 import time
 

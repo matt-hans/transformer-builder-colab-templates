@@ -12,7 +12,6 @@ These utilities are useful for training workflows and model optimization.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 from typing import Any, Dict, List, Optional
 import time
 
