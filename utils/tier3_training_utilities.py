@@ -14,6 +14,79 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Any, Dict, List, Optional
 import time
+import numpy as np
+
+
+def _detect_vocab_size(model: nn.Module, config: Any) -> int:
+    """
+    Detect vocabulary size from model or config.
+
+    Priority:
+    1. config.vocab_size (explicit)
+    2. model embedding layer vocab size (introspection)
+    3. Default fallback (50257 for GPT-2 compatibility)
+    """
+    # Try config first
+    if hasattr(config, 'vocab_size') and config.vocab_size is not None:
+        return config.vocab_size
+
+    # Try to detect from model embedding layers
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Embedding):
+            return module.num_embeddings
+
+    # Fallback with warning
+    print("⚠️ Could not detect vocab_size, using default 50257 (GPT-2)")
+    return 50257
+
+
+def _extract_output_tensor(output: Any) -> torch.Tensor:
+    """
+    Extract tensor from various model output formats.
+
+    Handles:
+    - Direct tensor: return as-is
+    - Tuple: return first element
+    - Dict: return output['logits'] or output['last_hidden_state']
+    - ModelOutput object: return .logits attribute
+    """
+    # Direct tensor
+    if isinstance(output, torch.Tensor):
+        return output
+
+    # Tuple (common for models that return multiple outputs)
+    if isinstance(output, tuple):
+        return output[0]
+
+    # Dict
+    if isinstance(output, dict):
+        if 'logits' in output:
+            return output['logits']
+        if 'last_hidden_state' in output:
+            return output['last_hidden_state']
+        # Return first tensor value found
+        for value in output.values():
+            if isinstance(value, torch.Tensor):
+                return value
+
+    # HuggingFace ModelOutput object
+    if hasattr(output, 'logits'):
+        return output.logits
+    if hasattr(output, 'last_hidden_state'):
+        return output.last_hidden_state
+
+    # Fallback - assume it's tensor-like
+    return output
+
+
+def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
+    """
+    Safely extract logits tensor from model output.
+
+    Wraps model() call and handles diverse output formats.
+    """
+    output = model(input_ids)
+    return _extract_output_tensor(output)
 
 
 def test_fine_tuning(
@@ -51,7 +124,7 @@ def test_fine_tuning(
         plt = None
 
     device = next(model.parameters()).device
-    vocab_size = getattr(config, 'vocab_size', 50257)
+    vocab_size = _detect_vocab_size(model, config)
 
     # Generate synthetic training data if not provided
     if train_data is None:
@@ -95,7 +168,7 @@ def test_fine_tuning(
             batch = torch.stack([train_data[idx] for idx in batch_indices]).to(device)
 
             # Forward pass
-            logits = model(batch)
+            logits = _safe_get_model_output(model, batch)
 
             # Compute loss (language modeling: predict next token)
             # Shift logits and labels for next-token prediction
@@ -219,7 +292,7 @@ def test_hyperparameter_search(
         print("⚠️ pandas not installed, returning dict instead of DataFrame")
         pd = None
 
-    vocab_size = getattr(config, 'vocab_size', 50257)
+    vocab_size = _detect_vocab_size(model, config)
 
     # Generate synthetic data if needed
     if train_data is None:
@@ -269,7 +342,7 @@ def test_hyperparameter_search(
             for i in range(0, len(train_data), batch_size):
                 batch = torch.stack(train_data[i:i+batch_size]).to(device)
 
-                logits = model(batch)
+                logits = _safe_get_model_output(model, batch)
 
                 # Next-token prediction loss
                 shift_logits = logits[:, :-1, :].contiguous()
@@ -399,7 +472,7 @@ def test_benchmark_comparison(
         plt = None
 
     device = next(model.parameters()).device
-    vocab_size = getattr(config, 'vocab_size', 50257)
+    vocab_size = _detect_vocab_size(model, config)
 
     print("=" * 60)
     print("BENCHMARK COMPARISON")
@@ -485,7 +558,7 @@ def test_benchmark_comparison(
 
         # Custom model
         with torch.no_grad():
-            custom_logits = model(input_ids)
+            custom_logits = _safe_get_model_output(model, input_ids)
             custom_loss = F.cross_entropy(
                 custom_logits[:, :-1, :].reshape(-1, vocab_size),
                 input_ids[:, 1:].reshape(-1)

@@ -13,6 +13,79 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Any, Dict, List, Optional
+import numpy as np
+
+
+def _detect_vocab_size(model: nn.Module, config: Any) -> int:
+    """
+    Detect vocabulary size from model or config.
+
+    Priority:
+    1. config.vocab_size (explicit)
+    2. model embedding layer vocab size (introspection)
+    3. Default fallback (50257 for GPT-2 compatibility)
+    """
+    # Try config first
+    if hasattr(config, 'vocab_size') and config.vocab_size is not None:
+        return config.vocab_size
+
+    # Try to detect from model embedding layers
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Embedding):
+            return module.num_embeddings
+
+    # Fallback with warning
+    print("⚠️ Could not detect vocab_size, using default 50257 (GPT-2)")
+    return 50257
+
+
+def _extract_output_tensor(output: Any) -> torch.Tensor:
+    """
+    Extract tensor from various model output formats.
+
+    Handles:
+    - Direct tensor: return as-is
+    - Tuple: return first element
+    - Dict: return output['logits'] or output['last_hidden_state']
+    - ModelOutput object: return .logits attribute
+    """
+    # Direct tensor
+    if isinstance(output, torch.Tensor):
+        return output
+
+    # Tuple (common for models that return multiple outputs)
+    if isinstance(output, tuple):
+        return output[0]
+
+    # Dict
+    if isinstance(output, dict):
+        if 'logits' in output:
+            return output['logits']
+        if 'last_hidden_state' in output:
+            return output['last_hidden_state']
+        # Return first tensor value found
+        for value in output.values():
+            if isinstance(value, torch.Tensor):
+                return value
+
+    # HuggingFace ModelOutput object
+    if hasattr(output, 'logits'):
+        return output.logits
+    if hasattr(output, 'last_hidden_state'):
+        return output.last_hidden_state
+
+    # Fallback - assume it's tensor-like
+    return output
+
+
+def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
+    """
+    Safely extract logits tensor from model output.
+
+    Wraps model() call and handles diverse output formats.
+    """
+    output = model(input_ids)
+    return _extract_output_tensor(output)
 
 
 def test_attention_patterns(
@@ -60,7 +133,7 @@ def test_attention_patterns(
         input_ids = torch.tensor([tokens]).to(device)
         token_labels = [tokenizer.decode([t]) for t in tokens]
     else:
-        vocab_size = getattr(config, 'vocab_size', 50257)
+        vocab_size = _detect_vocab_size(model, config)
         input_ids = torch.randint(0, vocab_size, (1, 16)).to(device)
         token_labels = [f"T{i}" for i in range(input_ids.shape[1])]
 
@@ -259,7 +332,7 @@ def test_attribution_analysis(
 
     # Prepare input
     if input_ids is None:
-        vocab_size = getattr(config, 'vocab_size', 50257)
+        vocab_size = _detect_vocab_size(model, config)
         input_ids = torch.randint(0, vocab_size, (1, 16)).to(device)
     else:
         input_ids = input_ids.to(device)
@@ -438,7 +511,7 @@ def test_robustness(
         pd = None
 
     device = next(model.parameters()).device
-    vocab_size = getattr(config, 'vocab_size', 50257)
+    vocab_size = _detect_vocab_size(model, config)
 
     print("=" * 60)
     print("ROBUSTNESS TESTING")
@@ -467,7 +540,7 @@ def test_robustness(
 
             # Clean prediction
             with torch.no_grad():
-                clean_output = model(input_ids)
+                clean_output = _safe_get_model_output(model, input_ids)
                 clean_pred = clean_output.argmax(dim=-1)
 
             # Add noise to embeddings (if supported)
@@ -493,14 +566,15 @@ def test_robustness(
                     # Forward with noisy embeddings
                     with torch.no_grad():
                         try:
-                            noisy_output = model(inputs_embeds=noisy_embeds)
+                            noisy_output_raw = model(inputs_embeds=noisy_embeds)
+                            noisy_output = _extract_output_tensor(noisy_output_raw)
                         except TypeError:
                             # Model doesn't support inputs_embeds
                             # Fall back to token-level perturbation
                             noisy_input_ids = input_ids.clone()
                             mask = torch.rand_like(input_ids.float()) < noise_std * 10
                             noisy_input_ids[mask] = torch.randint(0, vocab_size, (mask.sum(),)).to(device)
-                            noisy_output = model(noisy_input_ids)
+                            noisy_output = _safe_get_model_output(model, noisy_input_ids)
 
                         noisy_pred = noisy_output.argmax(dim=-1)
 
