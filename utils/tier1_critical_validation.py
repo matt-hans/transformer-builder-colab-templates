@@ -96,7 +96,7 @@ def test_shape_robustness(model: nn.Module, config: Any) -> Any:
         print("⚠️ pandas not installed, returning dict instead of DataFrame")
         pd = None
 
-    vocab_size = getattr(config, 'vocab_size', 50257)
+    vocab_size = _detect_vocab_size(model, config)
     max_seq_len = getattr(config, 'max_seq_len', 512)
     max_batch_size = getattr(config, 'max_batch_size', 16)
 
@@ -116,7 +116,7 @@ def test_shape_robustness(model: nn.Module, config: Any) -> Any:
             input_ids = torch.randint(0, vocab_size, (case["batch"], case["seq_len"])).to(device)
 
             with torch.no_grad():
-                output = model(input_ids)
+                output = _safe_get_model_output(model, input_ids)
 
             expected_shape = (case["batch"], case["seq_len"], vocab_size)
             actual_shape = tuple(output.shape)
@@ -163,7 +163,7 @@ def test_gradient_flow(model: nn.Module, config: Any) -> Any:
         print("⚠️ matplotlib not installed, skipping visualization")
         plt = None
 
-    vocab_size = getattr(config, 'vocab_size', 50257)
+    vocab_size = _detect_vocab_size(model, config)
     device = next(model.parameters()).device
 
     original_mode = model.training  # Preserve original training mode
@@ -171,14 +171,25 @@ def test_gradient_flow(model: nn.Module, config: Any) -> Any:
 
     # Forward + backward
     input_ids = torch.randint(0, vocab_size, (2, 32)).to(device)
-    logits = model(input_ids)
+    logits = _safe_get_model_output(model, input_ids)
 
-    # Use cross-entropy loss
-    labels = torch.randint(0, vocab_size, (2, 32)).to(device)
-    loss = F.cross_entropy(
-        logits.reshape(-1, vocab_size),
-        labels.reshape(-1)
-    )
+    # Use appropriate loss based on output shape
+    try:
+        # Try cross-entropy if output matches vocab_size
+        if logits.shape[-1] == vocab_size:
+            labels = torch.randint(0, vocab_size, (2, 32)).to(device)
+            loss = F.cross_entropy(
+                logits.reshape(-1, vocab_size),
+                labels.reshape(-1)
+            )
+        else:
+            # Fallback to MSE loss for non-classification outputs
+            target = torch.randn_like(logits)
+            loss = F.mse_loss(logits, target)
+    except Exception as e:
+        print(f"⚠️ Could not compute standard loss, using mean(): {e}")
+        loss = logits.mean()  # Last resort
+
     loss.backward()
 
     # Collect gradient statistics
@@ -255,7 +266,7 @@ def test_output_stability(model: nn.Module, config: Any, n_samples: int = 100) -
         print("⚠️ matplotlib not installed, skipping visualization")
         plt = None
 
-    vocab_size = getattr(config, 'vocab_size', 50257)
+    vocab_size = _detect_vocab_size(model, config)
     device = next(model.parameters()).device
 
     model.eval()
@@ -264,7 +275,7 @@ def test_output_stability(model: nn.Module, config: Any, n_samples: int = 100) -
     with torch.no_grad():
         for _ in range(n_samples):
             input_ids = torch.randint(0, vocab_size, (1, 32)).to(device)
-            logits = model(input_ids)
+            logits = _safe_get_model_output(model, input_ids)
             outputs.append(logits.cpu())
 
     outputs = torch.cat(outputs, dim=0)
@@ -420,7 +431,7 @@ def test_memory_footprint(model: nn.Module, config: Any) -> Any:
         print("⚠️ matplotlib not installed, skipping visualization")
         plt = None
 
-    vocab_size = getattr(config, 'vocab_size', 50257)
+    vocab_size = _detect_vocab_size(model, config)
     device = next(model.parameters()).device
 
     if device.type == 'cuda':
@@ -449,7 +460,7 @@ def test_memory_footprint(model: nn.Module, config: Any) -> Any:
             input_ids = torch.randint(0, vocab_size, (batch_size, 64)).to(device)
 
             with torch.no_grad():
-                output = model(input_ids)
+                output = _safe_get_model_output(model, input_ids)
 
             # Measure after
             if device.type == 'cuda':
@@ -520,7 +531,7 @@ def test_inference_speed(model: nn.Module, config: Any, n_trials: int = 50) -> D
         print("⚠️ matplotlib not installed, skipping visualization")
         plt = None
 
-    vocab_size = getattr(config, 'vocab_size', 50257)
+    vocab_size = _detect_vocab_size(model, config)
     device = next(model.parameters()).device
 
     model.eval()
@@ -540,7 +551,7 @@ def test_inference_speed(model: nn.Module, config: Any, n_trials: int = 50) -> D
 
         start = time.perf_counter()
         with torch.no_grad():
-            output = model(input_ids)
+            output = _safe_get_model_output(model, input_ids)
         if device.type == 'cuda':
             torch.cuda.synchronize()
         end = time.perf_counter()
