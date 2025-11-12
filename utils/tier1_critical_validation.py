@@ -15,9 +15,10 @@ These tests should pass before proceeding to advanced analysis or training.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import time
 import numpy as np
+import inspect
 
 
 def _detect_vocab_size(model: nn.Module, config: Any) -> int:
@@ -43,9 +44,15 @@ def _detect_vocab_size(model: nn.Module, config: Any) -> int:
     return 50257
 
 
-def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
+def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor,
+                           attention_mask: Optional[torch.Tensor] = None,
+                           config: Optional[Any] = None) -> torch.Tensor:
     """
     Safely extract logits tensor from model output.
+
+    Automatically handles both simple and complex model signatures:
+    - Simple signatures: forward(input_ids) or forward(input_ids, attention_mask)
+    - Complex signatures: forward(input_0_tokens, mhsa_0_output, ...) using adapters
 
     Handles multiple output formats:
     - Direct tensor: return as-is
@@ -53,8 +60,37 @@ def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor) -> torch.T
     - Dict: return output['logits'] or output['last_hidden_state']
     - ModelOutput object: return .logits attribute
     """
-    output = model(input_ids)
+    # Check if model has complex signature requiring intermediate outputs
+    try:
+        from ..adapters.model_adapter import ModelSignatureInspector, ComputationalGraphExecutor
 
+        inspector = ModelSignatureInspector(model)
+
+        if inspector.requires_intermediate_outputs():
+            # Complex signature - use executor
+            executor = ComputationalGraphExecutor(model, inspector)
+            output = executor.forward(input_ids, attention_mask)
+        else:
+            # Simple signature - call directly
+            sig_params = inspector.get_parameters()
+
+            if 'attention_mask' in sig_params and attention_mask is not None:
+                output = model(input_ids, attention_mask=attention_mask)
+            else:
+                output = model(input_ids)
+
+    except ImportError:
+        # Adapters not available - try direct call
+        try:
+            if attention_mask is not None:
+                output = model(input_ids, attention_mask=attention_mask)
+            else:
+                output = model(input_ids)
+        except TypeError:
+            # Fallback to just input_ids
+            output = model(input_ids)
+
+    # Extract tensor from output
     # Direct tensor
     if isinstance(output, torch.Tensor):
         return output
