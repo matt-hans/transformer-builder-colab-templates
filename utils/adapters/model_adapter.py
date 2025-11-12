@@ -445,7 +445,7 @@ class ComputationalGraphExecutor:
 
 
 # ==============================================================================
-# UNIVERSAL MODEL ADAPTER (Placeholder for Task 2.1)
+# UNIVERSAL MODEL ADAPTER
 # ==============================================================================
 
 class UniversalModelAdapter(pl.LightningModule):
@@ -459,7 +459,11 @@ class UniversalModelAdapter(pl.LightningModule):
     Implements PyTorch Lightning training/validation steps, loss computation,
     and optimizer configuration.
 
-    This is a placeholder - full implementation in Task 2.1.
+    Example:
+        >>> model = YourGeneratedModel(**config_dict)
+        >>> adapter = UniversalModelAdapter(model, config, tokenizer)
+        >>> trainer = pl.Trainer(max_epochs=3)
+        >>> trainer.fit(adapter, datamodule)
     """
 
     def __init__(self,
@@ -472,7 +476,7 @@ class UniversalModelAdapter(pl.LightningModule):
 
         Args:
             generated_model: The model to wrap
-            config: Model configuration object
+            config: Model configuration object with vocab_size attribute
             tokenizer: Tokenizer for this model
             learning_rate: Learning rate for optimizer
         """
@@ -485,12 +489,13 @@ class UniversalModelAdapter(pl.LightningModule):
         # Analyze model signature
         self.inspector = ModelSignatureInspector(generated_model)
 
-        # TODO (Task 2.1): Initialize executor if needed
-        # if self.inspector.requires_intermediate_outputs():
-        #     self.executor = ComputationalGraphExecutor(generated_model, self.inspector)
+        # Initialize executor if model has complex signature
+        self.executor = None
+        if self.inspector.requires_intermediate_outputs():
+            self.executor = ComputationalGraphExecutor(generated_model, self.inspector)
 
         # Save hyperparameters (excluding non-serializable objects)
-        self.save_hyperparameters(ignore=['generated_model', 'tokenizer'])
+        self.save_hyperparameters(ignore=['generated_model', 'tokenizer', 'config'])
 
     def forward(self,
                 input_ids: torch.Tensor,
@@ -499,27 +504,151 @@ class UniversalModelAdapter(pl.LightningModule):
         """
         Unified forward interface.
 
+        Automatically handles both simple and complex model signatures.
+
         Args:
-            input_ids: Input token IDs
-            attention_mask: Optional attention mask
-            labels: Optional labels for loss computation
+            input_ids: Input token IDs [batch_size, seq_len]
+            attention_mask: Optional attention mask [batch_size, seq_len]
+            labels: Optional labels for loss computation [batch_size, seq_len]
 
         Returns:
-            Dictionary with 'loss' and 'logits' keys
+            Dictionary with keys:
+                - 'logits': Model output logits [batch_size, seq_len, vocab_size]
+                - 'loss': Cross-entropy loss (if labels provided)
         """
-        # TODO (Task 2.1): Implement full forward logic
-        raise NotImplementedError("UniversalModelAdapter will be implemented in Task 2.1")
+        # Get logits using appropriate method
+        if self.executor is not None:
+            # Complex signature - use executor
+            logits = self.executor.forward(input_ids, attention_mask)
+        else:
+            # Simple signature - call model directly
+            params = self.inspector.get_parameters()
+
+            if 'attention_mask' in params and attention_mask is not None:
+                logits = self.model(input_ids, attention_mask=attention_mask)
+            else:
+                logits = self.model(input_ids)
+
+        # Handle tuple returns (some models return (logits, hidden_states, ...))
+        if isinstance(logits, tuple):
+            logits = logits[0]
+
+        # Compute loss if labels provided
+        loss = None
+        if labels is not None:
+            # Get vocab size from config or infer from logits
+            vocab_size = getattr(self.config, 'vocab_size', logits.shape[-1])
+
+            # Cross-entropy loss (language modeling)
+            loss = F.cross_entropy(
+                logits.view(-1, vocab_size),
+                labels.view(-1),
+                ignore_index=getattr(self.tokenizer, 'pad_token_id', -100)
+            )
+
+        return {'logits': logits, 'loss': loss}
 
     def training_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
-        """Lightning training step."""
-        # TODO (Task 2.1): Implement training step
-        raise NotImplementedError("Training step will be implemented in Task 2.1")
+        """
+        Lightning training step.
+
+        Args:
+            batch: Dictionary with 'input_ids', 'attention_mask', 'labels'
+            batch_idx: Batch index
+
+        Returns:
+            Training loss
+        """
+        output = self(
+            batch['input_ids'],
+            batch.get('attention_mask'),
+            batch.get('labels')
+        )
+
+        loss = output['loss']
+
+        # Log metrics
+        self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True)
+
+        return loss
 
     def validation_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
-        """Lightning validation step."""
-        # TODO (Task 2.1): Implement validation step
-        raise NotImplementedError("Validation step will be implemented in Task 2.1")
+        """
+        Lightning validation step.
+
+        Args:
+            batch: Dictionary with 'input_ids', 'attention_mask', 'labels'
+            batch_idx: Batch index
+
+        Returns:
+            Validation loss
+        """
+        output = self(
+            batch['input_ids'],
+            batch.get('attention_mask'),
+            batch.get('labels')
+        )
+
+        loss = output['loss']
+
+        # Log metrics
+        self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
+
+        # Compute perplexity
+        perplexity = torch.exp(loss)
+        self.log('val_perplexity', perplexity, prog_bar=True, on_step=False, on_epoch=True)
+
+        return loss
 
     def configure_optimizers(self):
-        """Configure AdamW optimizer."""
+        """
+        Configure AdamW optimizer.
+
+        Returns:
+            AdamW optimizer with configured learning rate
+        """
         return torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+
+    def generate(self,
+                 input_ids: torch.Tensor,
+                 max_new_tokens: int = 50,
+                 temperature: float = 1.0,
+                 top_k: Optional[int] = None) -> torch.Tensor:
+        """
+        Generate text autoregressively.
+
+        Args:
+            input_ids: Input token IDs [batch_size, seq_len]
+            max_new_tokens: Maximum number of tokens to generate
+            temperature: Sampling temperature (higher = more random)
+            top_k: If set, only sample from top k tokens
+
+        Returns:
+            Generated token IDs [batch_size, seq_len + max_new_tokens]
+        """
+        self.model.eval()
+
+        generated = input_ids
+
+        for _ in range(max_new_tokens):
+            # Get logits for next token
+            with torch.no_grad():
+                output = self(generated)
+                logits = output['logits']
+
+            # Get logits for last token
+            next_token_logits = logits[:, -1, :] / temperature
+
+            # Apply top-k filtering if specified
+            if top_k is not None:
+                indices_to_remove = next_token_logits < torch.topk(next_token_logits, top_k)[0][..., -1, None]
+                next_token_logits[indices_to_remove] = float('-inf')
+
+            # Sample next token
+            probs = F.softmax(next_token_logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+
+            # Append to generated sequence
+            generated = torch.cat([generated, next_token], dim=1)
+
+        return generated

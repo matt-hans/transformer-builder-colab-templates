@@ -10,7 +10,8 @@ import torch
 import torch.nn as nn
 from utils.adapters.model_adapter import (
     ModelSignatureInspector,
-    ComputationalGraphExecutor
+    ComputationalGraphExecutor,
+    UniversalModelAdapter
 )
 
 
@@ -515,6 +516,230 @@ class TestExecutorIntegration:
 
         # For simple signatures, we can verify structure
         assert direct_output.shape == (2, 10, 50257)
+
+
+# ==============================================================================
+# TESTS FOR UNIVERSAL MODEL ADAPTER
+# ==============================================================================
+
+class TestUniversalModelAdapter:
+    """Test suite for UniversalModelAdapter."""
+
+    def test_adapter_with_simple_model(self):
+        """Test adapter wraps simple model correctly."""
+        model = SimpleModel()
+
+        # Create mock config and tokenizer
+        class MockConfig:
+            vocab_size = 50257
+
+        class MockTokenizer:
+            pad_token_id = 0
+
+        config = MockConfig()
+        tokenizer = MockTokenizer()
+
+        # Create adapter
+        adapter = UniversalModelAdapter(model, config, tokenizer, learning_rate=1e-4)
+
+        # Check initialization
+        assert adapter.model is model
+        assert adapter.config is config
+        assert adapter.tokenizer is tokenizer
+        assert adapter.learning_rate == 1e-4
+
+        # Should not need executor for simple model
+        assert adapter.executor is None
+
+    def test_adapter_forward_with_simple_model(self):
+        """Test forward pass with simple model."""
+        model = SimpleModel()
+
+        class MockConfig:
+            vocab_size = 50257
+
+        class MockTokenizer:
+            pad_token_id = 0
+
+        adapter = UniversalModelAdapter(model, MockConfig(), MockTokenizer())
+
+        input_ids = torch.randint(0, 1000, (2, 10))
+        output = adapter(input_ids)
+
+        # Check output structure
+        assert 'logits' in output
+        assert 'loss' in output
+        assert output['logits'].shape == (2, 10, 50257)
+        assert output['loss'] is None  # No labels provided
+
+    def test_adapter_forward_with_labels(self):
+        """Test forward pass with labels computes loss."""
+        model = SimpleModel()
+
+        class MockConfig:
+            vocab_size = 50257
+
+        class MockTokenizer:
+            pad_token_id = 0
+
+        adapter = UniversalModelAdapter(model, MockConfig(), MockTokenizer())
+
+        input_ids = torch.randint(0, 1000, (2, 10))
+        labels = torch.randint(0, 1000, (2, 10))
+
+        output = adapter(input_ids, labels=labels)
+
+        # Check loss is computed
+        assert output['loss'] is not None
+        assert isinstance(output['loss'], torch.Tensor)
+        assert output['loss'].ndim == 0  # Scalar
+
+    def test_adapter_training_step(self):
+        """Test training step execution."""
+        model = SimpleModel()
+
+        class MockConfig:
+            vocab_size = 50257
+
+        class MockTokenizer:
+            pad_token_id = 0
+
+        adapter = UniversalModelAdapter(model, MockConfig(), MockTokenizer())
+
+        batch = {
+            'input_ids': torch.randint(0, 1000, (2, 10)),
+            'attention_mask': torch.ones(2, 10, dtype=torch.long),
+            'labels': torch.randint(0, 1000, (2, 10))
+        }
+
+        loss = adapter.training_step(batch, batch_idx=0)
+
+        assert isinstance(loss, torch.Tensor)
+        assert loss.ndim == 0  # Scalar
+        assert loss.item() > 0  # Positive loss
+
+    def test_adapter_validation_step(self):
+        """Test validation step execution."""
+        model = SimpleModelWithMask()
+
+        class MockConfig:
+            vocab_size = 50257
+
+        class MockTokenizer:
+            pad_token_id = 0
+
+        adapter = UniversalModelAdapter(model, MockConfig(), MockTokenizer())
+
+        batch = {
+            'input_ids': torch.randint(0, 1000, (2, 10)),
+            'attention_mask': torch.ones(2, 10, dtype=torch.long),
+            'labels': torch.randint(0, 1000, (2, 10))
+        }
+
+        loss = adapter.validation_step(batch, batch_idx=0)
+
+        assert isinstance(loss, torch.Tensor)
+        assert loss.ndim == 0
+        assert loss.item() > 0
+
+    def test_adapter_configure_optimizers(self):
+        """Test optimizer configuration."""
+        model = SimpleModel()
+
+        class MockConfig:
+            vocab_size = 50257
+
+        class MockTokenizer:
+            pad_token_id = 0
+
+        adapter = UniversalModelAdapter(model, MockConfig(), MockTokenizer(), learning_rate=5e-5)
+
+        optimizer = adapter.configure_optimizers()
+
+        assert isinstance(optimizer, torch.optim.AdamW)
+        assert optimizer.param_groups[0]['lr'] == 5e-5
+
+    def test_adapter_generate(self):
+        """Test text generation."""
+        model = SimpleModel()
+
+        class MockConfig:
+            vocab_size = 50257
+
+        class MockTokenizer:
+            pad_token_id = 0
+
+        adapter = UniversalModelAdapter(model, MockConfig(), MockTokenizer())
+
+        input_ids = torch.randint(0, 1000, (1, 5))
+
+        generated = adapter.generate(input_ids, max_new_tokens=10, temperature=1.0)
+
+        # Check output shape
+        assert generated.shape == (1, 15)  # original 5 + 10 new
+        # All values should be in vocab range
+        assert torch.all(generated >= 0)
+        assert torch.all(generated < 50257)
+
+
+# ==============================================================================
+# INTEGRATION TEST: FULL ADAPTER WORKFLOW
+# ==============================================================================
+
+class TestAdapterIntegration:
+    """Integration tests for complete adapter workflow."""
+
+    def test_adapter_with_complex_model_uses_executor(self):
+        """Test that adapter uses executor for complex signatures."""
+        model = ComplexModel()
+
+        class MockConfig:
+            vocab_size = 50257
+
+        class MockTokenizer:
+            pad_token_id = 0
+
+        adapter = UniversalModelAdapter(model, MockConfig(), MockTokenizer())
+
+        # Should have executor for complex model
+        assert adapter.executor is not None
+        assert isinstance(adapter.executor, ComputationalGraphExecutor)
+
+    def test_end_to_end_simple_model(self):
+        """Test complete workflow with simple model."""
+        # Create model
+        model = SimpleModelWithMask()
+
+        # Config
+        class Config:
+            vocab_size = 50257
+
+        # Mock tokenizer
+        class Tokenizer:
+            pad_token_id = 0
+
+        # Create adapter
+        adapter = UniversalModelAdapter(model, Config(), Tokenizer(), learning_rate=1e-4)
+
+        # Create batch
+        batch = {
+            'input_ids': torch.randint(0, 1000, (4, 16)),
+            'attention_mask': torch.ones(4, 16, dtype=torch.long),
+            'labels': torch.randint(0, 1000, (4, 16))
+        }
+
+        # Training step
+        train_loss = adapter.training_step(batch, 0)
+        assert train_loss.item() > 0
+
+        # Validation step
+        val_loss = adapter.validation_step(batch, 0)
+        assert val_loss.item() > 0
+
+        # Generation
+        prompt = torch.randint(0, 1000, (1, 8))
+        generated = adapter.generate(prompt, max_new_tokens=5)
+        assert generated.shape == (1, 13)
 
 
 if __name__ == '__main__':
