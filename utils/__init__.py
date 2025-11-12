@@ -34,8 +34,9 @@ from .training.export_utilities import (
     ModelCardGenerator
 )
 
-# UI (will be available after implementation)
-# from .ui.setup_wizard import SetupWizard
+# UI (Tasks 5.1-5.2 complete)
+from .ui.setup_wizard import SetupWizard
+from .ui.presets import ConfigPresets, PRESETS
 
 # Test functions (backward compatibility - already available)
 from .test_functions import *
@@ -68,8 +69,10 @@ __all__ = [
     'TorchScriptExporter',
     'ModelCardGenerator',
 
-    # UI (coming soon)
-    # 'SetupWizard',
+    # UI (available now)
+    'SetupWizard',
+    'ConfigPresets',
+    'PRESETS',
 
     # Test functions (available now - re-exported from test_functions.py)
     'test_shape_robustness',
