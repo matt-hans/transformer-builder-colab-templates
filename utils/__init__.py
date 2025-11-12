@@ -17,12 +17,12 @@ from .adapters.model_adapter import (
     UniversalModelAdapter
 )
 
-# Tokenization (will be available after implementation)
-# from .tokenization.adaptive_tokenizer import AdaptiveTokenizer
-# from .tokenization.bpe_trainer import FastBPETrainer
-# from .tokenization.character_tokenizer import CharacterLevelTokenizer
-# from .tokenization.validator import TokenizerValidator
-# from .tokenization.data_module import AdaptiveTokenizerDataModule
+# Tokenization (Tasks 2.2-2.7 complete)
+from .tokenization.adaptive_tokenizer import AdaptiveTokenizer
+from .tokenization.bpe_trainer import FastBPETrainer, BPETrainerConfig
+from .tokenization.character_tokenizer import CharacterLevelTokenizer
+from .tokenization.validator import TokenizerValidator
+from .tokenization.data_module import AdaptiveTokenizerDataModule, SimpleDataModule
 
 # Training (will be available after implementation)
 # from .training.dataset_utilities import DatasetLoader, DatasetUploader
@@ -49,12 +49,14 @@ __all__ = [
     'ComputationalGraphExecutor',
     'UniversalModelAdapter',
 
-    # Tokenization (coming soon)
-    # 'AdaptiveTokenizer',
-    # 'FastBPETrainer',
-    # 'CharacterLevelTokenizer',
-    # 'TokenizerValidator',
-    # 'AdaptiveTokenizerDataModule',
+    # Tokenization
+    'AdaptiveTokenizer',
+    'FastBPETrainer',
+    'BPETrainerConfig',
+    'CharacterLevelTokenizer',
+    'TokenizerValidator',
+    'AdaptiveTokenizerDataModule',
+    'SimpleDataModule',
 
     # Training (coming soon)
     # 'DatasetLoader',
