@@ -1,0 +1,50 @@
+# Transformer Builder Colab Template - Requirements
+# Production-ready pinned dependencies for Google Colab
+# Version: 2.0.0
+# Last Updated: 2025-01-11
+
+# ==============================================================================
+# CRITICAL: Install numpy FIRST before other packages
+# numpy==1.26.4 must be installed separately to avoid conflicts
+# ==============================================================================
+
+# PyTorch ecosystem (compatible with Colab's CUDA setup)
+torch==2.1.2
+torchvision==0.16.2
+torchaudio==2.1.2
+
+# HuggingFace ecosystem
+transformers==4.36.2
+tokenizers==0.15.0
+datasets==2.16.1
+accelerate==0.25.0
+huggingface-hub==0.20.2
+
+# Training framework
+pytorch-lightning==2.1.0
+torchmetrics==1.2.1
+
+# Visualization and monitoring
+matplotlib==3.8.2
+seaborn==0.13.0
+plotly==5.18.0
+
+# Export formats
+onnx==1.15.0
+onnxruntime==1.16.3
+
+# Notebook UI components
+ipywidgets==8.1.1
+tqdm==4.66.1
+
+# Utilities
+psutil==5.9.6
+pyyaml==6.0.1
+
+# Data processing
+pandas==2.1.4
+scikit-learn==1.3.2
+
+# Development (optional)
+pytest==7.4.3
+pytest-cov==4.1.0
