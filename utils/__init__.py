@@ -24,15 +24,15 @@ from .tokenization.character_tokenizer import CharacterLevelTokenizer
 from .tokenization.validator import TokenizerValidator
 from .tokenization.data_module import AdaptiveTokenizerDataModule, SimpleDataModule
 
-# Training (will be available after implementation)
-# from .training.dataset_utilities import DatasetLoader, DatasetUploader
-# from .training.checkpoint_manager import CheckpointManager
-# from .training.training_core import TrainingCoordinator
-# from .training.export_utilities import (
-#     ONNXExporter,
-#     TorchScriptExporter,
-#     ModelCardGenerator
-# )
+# Training (Tasks 3.1-4.4 complete)
+from .training.dataset_utilities import DatasetLoader, DatasetUploader
+from .training.checkpoint_manager import CheckpointManager
+from .training.training_core import TrainingCoordinator, train_model
+from .training.export_utilities import (
+    ONNXExporter,
+    TorchScriptExporter,
+    ModelCardGenerator
+)
 
 # UI (will be available after implementation)
 # from .ui.setup_wizard import SetupWizard
@@ -58,14 +58,15 @@ __all__ = [
     'AdaptiveTokenizerDataModule',
     'SimpleDataModule',
 
-    # Training (coming soon)
-    # 'DatasetLoader',
-    # 'DatasetUploader',
-    # 'CheckpointManager',
-    # 'TrainingCoordinator',
-    # 'ONNXExporter',
-    # 'TorchScriptExporter',
-    # 'ModelCardGenerator',
+    # Training (available now)
+    'DatasetLoader',
+    'DatasetUploader',
+    'CheckpointManager',
+    'TrainingCoordinator',
+    'train_model',
+    'ONNXExporter',
+    'TorchScriptExporter',
+    'ModelCardGenerator',
 
     # UI (coming soon)
     # 'SetupWizard',
