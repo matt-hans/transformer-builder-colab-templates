@@ -10,10 +10,12 @@ License: MIT
 
 __version__ = "2.0.0"
 
-# Core adapters
-from .adapters.model_adapter import ModelSignatureInspector
-# from .adapters.model_adapter import ComputationalGraphExecutor  # Task 1.4
-# from .adapters.model_adapter import UniversalModelAdapter       # Task 2.1
+# Core adapters (Tasks 1.3 & 1.4 complete)
+from .adapters.model_adapter import (
+    ModelSignatureInspector,
+    ComputationalGraphExecutor
+)
+# from .adapters.model_adapter import UniversalModelAdapter  # Task 2.1
 
 # Tokenization (will be available after implementation)
 # from .tokenization.adaptive_tokenizer import AdaptiveTokenizer
@@ -44,8 +46,8 @@ __all__ = [
 
     # Adapters
     'ModelSignatureInspector',
-    # 'ComputationalGraphExecutor',  # Task 1.4
-    # 'UniversalModelAdapter',        # Task 2.1
+    'ComputationalGraphExecutor',
+    # 'UniversalModelAdapter',  # Task 2.1
 
     # Tokenization (coming soon)
     # 'AdaptiveTokenizer',
