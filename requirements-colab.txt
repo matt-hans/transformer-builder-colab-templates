@@ -1,38 +1,49 @@
 # Transformer Builder Colab Template - Requirements
-# Minimal dependencies - leverages Colab's pre-installed packages
-# Version: 3.2.0
+# MINIMAL dependencies to prevent numpy corruption
+# Version: 3.3.0
 # Last Updated: 2025-01-13
 
 # ==============================================================================
-# CRITICAL: Removed onnx/onnxruntime - they require numpy<2.0 and corrupt Colab's numpy
-# See: https://github.com/microsoft/onnxruntime/issues/21063
+# CRITICAL FIX (v3.3.0): Removed datasets, tokenizers, optuna, huggingface-hub
+# These packages corrupt Colab's numpy 2.x through transitive dependencies
+# See: BUG_REPORT_v3.2.0_numpy_corruption.md for full analysis
 # ==============================================================================
 
-# HuggingFace ecosystem (safe with numpy 2.x)
-datasets>=2.16.0,<3.0.0
-tokenizers>=0.15.0,<1.0.0
-huggingface-hub>=0.20.0,<1.0.0
+# VERIFIED SAFE - Core utilities only
+torchinfo>=1.8.0,<3.0.0    # Model architecture inspection
 
-# Utilities (safe)
-torchinfo>=1.8.0,<3.0.0
-
-# Training optimization (safe)
-optuna>=3.0.0,<4.0.0
-
-# Development (optional)
+# Development tools (optional, safe)
 pytest>=7.4.0,<8.0.0
 pytest-cov>=4.1.0,<5.0.0
 
 # ==============================================================================
+# INSTALL MANUALLY IF NEEDED (to avoid numpy corruption during Cell 3):
+#
+# For HuggingFace datasets:
+#   !pip install datasets --no-deps
+#   !pip install pyarrow dill xxhash multiprocess  # Install deps separately
+#
+# For tokenizers:
+#   !pip install tokenizers
+#
+# For hyperparameter optimization:
+#   !pip install optuna --no-deps
+#   !pip install alembic colorlog sqlalchemy  # Install deps separately
+#
+# For HuggingFace Hub:
+#   !pip install huggingface-hub
+# ==============================================================================
+
+# ==============================================================================
 # INSTALL SEPARATELY WITH --no-deps (to prevent numpy corruption):
-# - pytorch-lightning (see installation cell for manual install)
-# - torchmetrics (dependency of lightning)
-# - accelerate (has numpy constraints)
+# - pytorch-lightning>=2.4.0,<2.6.0 (see installation cell for manual install)
+# - torchmetrics>=1.3.0,<2.0.0 (dependency of lightning)
+# - lightning-utilities>=0.10.0 (dependency of lightning)
 # ==============================================================================
 
 # ==============================================================================
 # COLAB PRE-INSTALLED (DO NOT REINSTALL):
-# - numpy 2.x (corrupts if reinstalled!)
+# - numpy 2.3.4 (corrupts if reinstalled!)
 # - torch 2.6-2.8
 # - transformers 4.37+
 # - pandas, matplotlib, seaborn, plotly
