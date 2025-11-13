@@ -12,7 +12,7 @@ Includes validation, optimization, and benchmarking.
 import os
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple, List, Union
+from typing import Optional, Dict, Any, Tuple, List, Union, Literal
 from datetime import datetime
 import torch
 import torch.nn as nn
