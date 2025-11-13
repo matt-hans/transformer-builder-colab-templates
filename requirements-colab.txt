@@ -5,8 +5,11 @@
 
 # ==============================================================================
 # IMPORTANT: Compatible with Colab's pre-installed packages (numpy>=2.0)
-# No explicit numpy pin - uses Colab's default numpy>=2.0
+# Explicit numpy constraint prevents reinstallation over Colab's default
 # ==============================================================================
+
+# Core scientific computing (must preserve Colab's default)
+numpy>=2.0,<3.0
 
 # PyTorch ecosystem (modern versions compatible with Colab CUDA)
 torch>=2.2.2,<2.6.0
