@@ -20,9 +20,9 @@ datasets>=2.16.0,<3.0.0
 accelerate>=0.25.0,<1.0.0
 huggingface-hub>=0.20.0,<1.0.0
 
-# Training framework
-pytorch-lightning>=2.1.0,<3.0.0
-torchmetrics>=1.2.0,<2.0.0
+# Training framework (compatible with torch 2.2-2.5)
+pytorch-lightning>=2.4.0,<2.6.0
+torchmetrics>=1.3.0,<2.0.0
 
 # Visualization and monitoring
 matplotlib>=3.8.0,<4.0.0
@@ -45,7 +45,6 @@ torchinfo>=1.8.0,<3.0.0
 # Data processing
 pandas>=2.1.0,<3.0.0
 scikit-learn>=1.3.0,<2.0.0
-fsspec>=2025.3.0,<2026.0.0
 
 # Testing utilities (Tier 2)
 captum>=0.7.0,<1.0.0
