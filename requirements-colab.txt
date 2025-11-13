@@ -1,24 +1,20 @@
 # Transformer Builder Colab Template - Requirements
 # Minimal dependencies - leverages Colab's pre-installed packages
-# Version: 3.1.0
+# Version: 3.2.0
 # Last Updated: 2025-01-13
 
 # ==============================================================================
-# CRITICAL: Use --no-binary and specific install order to prevent numpy corruption
-# Strategy: Install packages one by one to avoid pip trying to "fix" dependencies
+# CRITICAL: Removed onnx/onnxruntime - they require numpy<2.0 and corrupt Colab's numpy
+# See: https://github.com/microsoft/onnxruntime/issues/21063
 # ==============================================================================
 
-# HuggingFace ecosystem (install FIRST - no numpy deps)
+# HuggingFace ecosystem (safe with numpy 2.x)
 datasets>=2.16.0,<3.0.0
 tokenizers>=0.15.0,<1.0.0
 huggingface-hub>=0.20.0,<1.0.0
 
-# Utilities (safe - no numpy conflicts)
+# Utilities (safe)
 torchinfo>=1.8.0,<3.0.0
-
-# Export formats (safe - no numpy conflicts)
-onnx>=1.15.0,<2.0.0
-onnxruntime>=1.16.0,<2.0.0
 
 # Training optimization (safe)
 optuna>=3.0.0,<4.0.0
