@@ -8,11 +8,18 @@ and export utilities for ONNX and TorchScript.
 # Dataset utilities (Tasks 3.1-3.2)
 from .dataset_utilities import DatasetLoader, DatasetUploader
 
-# Checkpoint management (Task 3.3)
-from .checkpoint_manager import CheckpointManager
+# Checkpoint management (Task 3.3) - requires pytorch_lightning
+try:
+    from .checkpoint_manager import CheckpointManager
+except ImportError:
+    CheckpointManager = None
 
-# Training core (Task 4.1)
-from .training_core import TrainingCoordinator, train_model
+# Training core (Task 4.1) - requires pytorch_lightning
+try:
+    from .training_core import TrainingCoordinator, train_model
+except ImportError:
+    TrainingCoordinator = None
+    train_model = None
 
 # Export utilities (Tasks 4.2-4.4)
 from .export_utilities import ONNXExporter, TorchScriptExporter, ModelCardGenerator
