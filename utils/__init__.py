@@ -22,17 +22,37 @@ from .tokenization.adaptive_tokenizer import AdaptiveTokenizer
 from .tokenization.bpe_trainer import FastBPETrainer, BPETrainerConfig
 from .tokenization.character_tokenizer import CharacterLevelTokenizer
 from .tokenization.validator import TokenizerValidator
-from .tokenization.data_module import AdaptiveTokenizerDataModule, SimpleDataModule
+
+# Tokenization data modules - only import if pytorch_lightning available
+try:
+    from .tokenization.data_module import AdaptiveTokenizerDataModule, SimpleDataModule
+except ImportError:
+    # Stub classes when pytorch_lightning not available
+    class AdaptiveTokenizerDataModule:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("AdaptiveTokenizerDataModule requires pytorch_lightning (Tier 3 only)")
+
+    class SimpleDataModule:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("SimpleDataModule requires pytorch_lightning (Tier 3 only)")
 
 # Training (Tasks 3.1-4.4 complete)
 from .training.dataset_utilities import DatasetLoader, DatasetUploader
-from .training.checkpoint_manager import CheckpointManager
-from .training.training_core import TrainingCoordinator, train_model
 from .training.export_utilities import (
     ONNXExporter,
     TorchScriptExporter,
     ModelCardGenerator
 )
+
+# Training modules requiring pytorch_lightning - only import if available
+try:
+    from .training.checkpoint_manager import CheckpointManager
+    from .training.training_core import TrainingCoordinator, train_model
+except ImportError:
+    # Set to None for Tier 1/2 users without pytorch_lightning
+    CheckpointManager = None
+    TrainingCoordinator = None
+    train_model = None
 
 # UI (Tasks 5.1-5.2 complete)
 from .ui.setup_wizard import SetupWizard
