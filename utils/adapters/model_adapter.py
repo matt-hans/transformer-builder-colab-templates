@@ -15,8 +15,22 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Any, Dict, List, Optional, Set, Tuple
-import pytorch_lightning as pl
-from transformers import PreTrainedTokenizer
+
+# Optional dependency - only needed for Tier 3 (UniversalModelAdapter)
+try:
+    import pytorch_lightning as pl
+    HAS_LIGHTNING = True
+except ImportError:
+    pl = None
+    HAS_LIGHTNING = False
+
+# Optional dependency - only needed for tokenization
+try:
+    from transformers import PreTrainedTokenizer
+    HAS_TRANSFORMERS = True
+except ImportError:
+    PreTrainedTokenizer = None
+    HAS_TRANSFORMERS = False
 
 
 # ==============================================================================
@@ -448,11 +462,13 @@ class ComputationalGraphExecutor:
 # UNIVERSAL MODEL ADAPTER
 # ==============================================================================
 
-class UniversalModelAdapter(pl.LightningModule):
-    """
-    Lightning-compatible wrapper for ANY generated model.
+# Only define if pytorch_lightning is available (Tier 3 only)
+if HAS_LIGHTNING:
+    class UniversalModelAdapter(pl.LightningModule):
+        """
+        Lightning-compatible wrapper for ANY generated model.
 
-    Provides a unified interface regardless of model's forward() signature:
+        Provides a unified interface regardless of model's forward() signature:
     - Simple signatures: calls model directly
     - Complex signatures: uses ComputationalGraphExecutor
 
@@ -652,3 +668,18 @@ class UniversalModelAdapter(pl.LightningModule):
             generated = torch.cat([generated, next_token], dim=1)
 
         return generated
+else:
+    # Stub class when pytorch_lightning is not available
+    class UniversalModelAdapter:
+        """
+        Stub class for UniversalModelAdapter when pytorch_lightning is not installed.
+
+        This class is only used for Tier 3 tests. If you see this error, run the
+        Tier 3 installation cell to install pytorch_lightning.
+        """
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "UniversalModelAdapter requires pytorch_lightning. "
+                "This is only needed for Tier 3 tests. "
+                "Please run the Tier 3 installation cell before using this feature."
+            )
