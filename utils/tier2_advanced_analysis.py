@@ -88,6 +88,57 @@ def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor) -> torch.T
     return _extract_output_tensor(output)
 
 
+def _has_multihead_attention_layers(model: nn.Module) -> bool:
+    """Check if model contains nn.MultiheadAttention layers."""
+    for module in model.modules():
+        if isinstance(module, nn.MultiheadAttention):
+            return True
+    return False
+
+
+def _extract_attention_from_mha_model(
+    model: nn.Module,
+    input_ids: torch.Tensor
+) -> List[torch.Tensor]:
+    """
+    Extract attention weights from models using nn.MultiheadAttention.
+
+    This requires monkey-patching the forward calls to capture attention weights,
+    since nn.MultiheadAttention needs explicit need_weights=True parameter.
+    """
+    attention_weights = []
+    original_forwards = {}
+
+    # Monkey-patch all MultiheadAttention layers
+    def create_hooked_forward(original_forward, layer_name):
+        def hooked_forward(query, key, value, *args, **kwargs):
+            # Force need_weights and get per-head attention
+            kwargs['need_weights'] = True
+            kwargs['average_attn_weights'] = False  # Get per-head weights
+            output, attn = original_forward(query, key, value, *args, **kwargs)
+            if attn is not None:
+                attention_weights.append(attn.detach().cpu())
+            return output, attn
+        return hooked_forward
+
+    # Store and replace forward methods
+    for name, module in model.named_modules():
+        if isinstance(module, nn.MultiheadAttention):
+            original_forwards[module] = module.forward
+            module.forward = create_hooked_forward(module.forward, name)
+
+    # Run forward pass
+    try:
+        with torch.no_grad():
+            _ = model(input_ids)
+    finally:
+        # Restore original forward methods
+        for module, original_forward in original_forwards.items():
+            module.forward = original_forward
+
+    return attention_weights
+
+
 def test_attention_patterns(
     model: nn.Module,
     config: Any,
@@ -138,40 +189,45 @@ def test_attention_patterns(
         token_labels = [f"T{i}" for i in range(input_ids.shape[1])]
 
     # Extract attention weights
-    # This is model-specific; adjust based on your model's structure
-    attention_weights = []
+    # Detect model architecture and extract attention accordingly
+    if _has_multihead_attention_layers(model):
+        # Use specialized extraction for nn.MultiheadAttention
+        attention_weights = _extract_attention_from_mha_model(model, input_ids)
+    else:
+        # Use existing hook-based approach for HuggingFace-style models
+        attention_weights = []
 
-    def attention_hook(module, input, output):
-        """Hook to capture attention weights from transformer layers."""
-        if hasattr(output, 'attentions') and output.attentions is not None:
-            attention_weights.append(output.attentions.detach().cpu())
-        elif isinstance(output, tuple) and len(output) > 1:
-            # Some models return (output, attention) tuples
-            attn = output[1]
-            if attn is not None:
-                attention_weights.append(attn.detach().cpu())
-
-    # Register hooks (this is generic; may need adjustment for specific models)
-    hooks = []
-    for name, module in model.named_modules():
-        if 'attention' in name.lower() or 'attn' in name.lower():
-            hook = module.register_forward_hook(attention_hook)
-            hooks.append(hook)
-
-    # Forward pass
-    with torch.no_grad():
-        try:
-            output = model(input_ids, output_attentions=True)
-            # Try to extract attentions from output
+        def attention_hook(module, input, output):
+            """Hook to capture attention weights from transformer layers."""
             if hasattr(output, 'attentions') and output.attentions is not None:
-                attention_weights = [a.cpu() for a in output.attentions]
-        except TypeError:
-            # Model doesn't support output_attentions parameter
-            output = model(input_ids)
+                attention_weights.append(output.attentions.detach().cpu())
+            elif isinstance(output, tuple) and len(output) > 1:
+                # Some models return (output, attention) tuples
+                attn = output[1]
+                if attn is not None:
+                    attention_weights.append(attn.detach().cpu())
 
-    # Remove hooks
-    for hook in hooks:
-        hook.remove()
+        # Register hooks (this is generic; may need adjustment for specific models)
+        hooks = []
+        for name, module in model.named_modules():
+            if 'attention' in name.lower() or 'attn' in name.lower():
+                hook = module.register_forward_hook(attention_hook)
+                hooks.append(hook)
+
+        # Forward pass
+        with torch.no_grad():
+            try:
+                output = model(input_ids, output_attentions=True)
+                # Try to extract attentions from output
+                if hasattr(output, 'attentions') and output.attentions is not None:
+                    attention_weights = [a.cpu() for a in output.attentions]
+            except TypeError:
+                # Model doesn't support output_attentions parameter
+                output = model(input_ids)
+
+        # Remove hooks
+        for hook in hooks:
+            hook.remove()
 
     # Analyze attention patterns
     results = {
