@@ -11,7 +11,14 @@ import os
 from pathlib import Path
 from typing import Optional, Union, Dict, Any, Literal, List
 import torch
-import pytorch_lightning as pl
+# Optional dependency - only needed for Tier 3
+try:
+    import pytorch_lightning as pl
+    HAS_LIGHTNING = True
+except ImportError:
+    pl = None
+    HAS_LIGHTNING = False
+
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 from datasets import Dataset

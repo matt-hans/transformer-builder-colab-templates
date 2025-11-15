@@ -2,46 +2,62 @@
 
 Advanced testing and training infrastructure for transformer models built with [Transformer Builder](https://transformer-builder.com).
 
-## Quick Start
+## Quick Start (v3.4.0)
 
+### Step 1: Model Validation
 1. Build a transformer in [Transformer Builder](https://transformer-builder.com)
 2. Click "Open in Colab" in the export panel
-3. The notebook will automatically load your model and run validation tests
+3. The notebook automatically loads your model and runs validation tests
 
-No setup required - everything is pre-configured!
+**Zero installation required** - uses only pre-installed Colab packages!
+
+### Step 2: Training (Optional)
+1. Open `training.ipynb` in Colab
+2. Restart runtime (Runtime → Restart runtime)
+3. Paste your same Gist ID
+4. Run training and optimization tests
+
+**Why two notebooks?** Training dependencies (pytorch-lightning, optuna) require NumPy version changes. Separating them prevents dependency conflicts and keeps validation fast.
 
 ## What's Included
 
-### Tier 1: Critical Validation (~1 minute)
+### 📓 template.ipynb - Tier 1 & 2 Tests
+
+#### Tier 1: Critical Validation (~1 minute)
 - ✅ Multi-input shape verification across edge cases
 - ✅ Gradient flow analysis (detect vanishing/exploding gradients)
-- ✅ Numerical stability checks (NaN/Inf detection, output distribution)
+- ✅ Numerical stability checks (NaN/Inf detection)
 - ✅ Parameter initialization validation
 - ✅ Memory footprint profiling
 - ✅ Inference speed benchmarks
 
-### Tier 2: Advanced Analysis (~4 minutes)
-- 🔬 Attention pattern analysis (entropy, sparsity, pattern classification)
-- 🔬 Feature attribution using Integrated Gradients
-- 🔬 Input perturbation sensitivity testing
-- 🔬 Adversarial token search
-- 🔬 Effective rank & capacity utilization analysis
+#### Tier 2: Advanced Analysis (~3 minutes)
+- 🔬 Attention pattern analysis (multi-head attention support)
+- 🔬 Robustness testing under input perturbations
 
-### Tier 3: Training & Fine-Tuning (5-120 minutes)
-- 🚀 Training loop with comprehensive diagnostics
+### 📓 training.ipynb - Tier 3 Training
+
+#### Tier 3: Training & Fine-Tuning (10-20 minutes)
+- 🚀 Fine-tuning loop with loss tracking
 - 🚀 Hyperparameter optimization using Optuna
-- 🚀 GLUE benchmark evaluation
+- 🚀 Benchmark comparison against baselines
 
 ## Repository Structure
 
 ```
 transformer-builder-colab-templates/
-├── template.ipynb              # Main template (auto-populated from URL)
-├── examples/
-│   ├── example_distilgpt2.ipynb      # Pre-filled decoder example
-│   └── example_bert_encoder.ipynb    # Pre-filled encoder example
+├── template.ipynb              # Testing & validation (Tier 1 + 2)
+├── training.ipynb              # Training utilities (Tier 3)
 ├── utils/
-│   └── test_functions.py       # Importable test utilities
+│   ├── test_functions.py       # Unified test facade
+│   ├── tier1_critical_validation.py
+│   ├── tier2_advanced_analysis.py
+│   ├── tier3_training_utilities.py
+│   ├── adapters/               # Model introspection
+│   ├── tokenization/           # BPE training & validation
+│   ├── training/               # Dataset, checkpoints, export
+│   └── ui/                     # Setup wizard & presets
+├── requirements-colab.txt      # Dependency documentation
 └── README.md
 ```
 

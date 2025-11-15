@@ -15,7 +15,14 @@ import shutil
 from pathlib import Path
 from typing import Optional, Dict, Any, Literal, List
 import torch
-import pytorch_lightning as pl
+# Optional dependency - only needed for Tier 3
+try:
+    import pytorch_lightning as pl
+    HAS_LIGHTNING = True
+except ImportError:
+    pl = None
+    HAS_LIGHTNING = False
+
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback
 import json
 from datetime import datetime
