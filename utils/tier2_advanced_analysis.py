@@ -131,6 +131,10 @@ def _extract_attention_from_mha_model(
     try:
         with torch.no_grad():
             _ = model(input_ids)
+    except Exception as e:
+        print(f"⚠️ Error during attention extraction: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         # Restore original forward methods
         for module, original_forward in original_forwards.items():
@@ -192,7 +196,9 @@ def test_attention_patterns(
     # Detect model architecture and extract attention accordingly
     if _has_multihead_attention_layers(model):
         # Use specialized extraction for nn.MultiheadAttention
+        print("🔍 Detected nn.MultiheadAttention layers - using specialized extraction")
         attention_weights = _extract_attention_from_mha_model(model, input_ids)
+        print(f"   Extracted {len(attention_weights)} attention weight tensor(s)")
     else:
         # Use existing hook-based approach for HuggingFace-style models
         attention_weights = []
