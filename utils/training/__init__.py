@@ -38,6 +38,9 @@ from .environment_snapshot import (
 # Seed management (Task T015)
 from .seed_manager import set_random_seed, seed_worker, create_seeded_generator
 
+# Training configuration versioning (Task T017)
+from .training_config import TrainingConfig, compare_configs
+
 __all__ = [
     # Dataset utilities
     'DatasetLoader',
@@ -68,4 +71,8 @@ __all__ = [
     'set_random_seed',
     'seed_worker',
     'create_seeded_generator',
+
+    # Training configuration
+    'TrainingConfig',
+    'compare_configs',
 ]

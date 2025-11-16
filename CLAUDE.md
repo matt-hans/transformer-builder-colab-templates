@@ -43,6 +43,54 @@ from utils.test_functions import run_all_tier1_tests
 run_all_tier1_tests(model, config)
 ```
 
+### Using TrainingConfig for Reproducible Experiments
+```python
+from utils.training.training_config import TrainingConfig, compare_configs
+from utils.training.seed_manager import set_random_seed
+
+# Create versioned configuration
+config = TrainingConfig(
+    # Hyperparameters
+    learning_rate=5e-5,
+    batch_size=4,
+    epochs=10,
+
+    # Model architecture
+    vocab_size=50257,
+    d_model=768,
+    num_layers=12,
+
+    # Reproducibility
+    random_seed=42,
+    deterministic=False,  # Fast mode
+
+    # Experiment tracking
+    wandb_project="transformer-training",
+    run_name="baseline-exp",
+    notes="Baseline configuration"
+)
+
+# Validate before training
+config.validate()  # Raises ValueError if invalid
+
+# Save for reproducibility (auto-generates timestamped filename)
+config_path = config.save()  # config_20250115_143022.json
+
+# Set seed from config
+set_random_seed(config.random_seed, config.deterministic)
+
+# Log to W&B
+import wandb
+wandb.init(project=config.wandb_project, config=config.to_dict())
+
+# Later: Load to reproduce experiment
+loaded_config = TrainingConfig.load(config_path)
+
+# Compare configurations
+diff = compare_configs(config_v1, config_v2)
+# Prints: learning_rate: 5e-5 → 1e-4, batch_size: 4 → 8
+```
+
 ### Using MetricsTracker for Training with W&B
 ```python
 from utils.training.metrics_tracker import MetricsTracker
