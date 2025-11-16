@@ -181,7 +181,7 @@
       "id": "T016",
       "title": "Reproducibility - Environment Snapshot (pip freeze)",
       "file": "tasks/T016-reproducibility-environment-snapshot.yaml",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-MVP",
       "phase": "mvp",
       "depends_on": [
@@ -194,7 +194,14 @@
         "mvp"
       ],
       "estimated_hours": 1.5,
-      "created_at": "2025-01-15"
+      "actual_hours": 2.0,
+      "estimated_tokens": 6000,
+      "actual_tokens": 6000,
+      "created_at": "2025-01-15",
+      "started_at": "2025-11-16T18:30:00Z",
+      "completed_at": "2025-11-16T20:34:23Z",
+      "completed_by": "task-completer",
+      "quality_score": 91
     },
     {
       "id": "T017",
@@ -359,7 +366,7 @@
       "id": "T035",
       "title": "Training Loop Improvements - Mixed Precision Training (AMP)",
       "file": "tasks/T035-training-mixed-precision.yaml",
-      "status": "in_progress",
+      "status": "completed",
       "priority": "P1-MVP",
       "phase": "mvp",
       "depends_on": [
@@ -374,13 +381,17 @@
       ],
       "estimated_hours": 2,
       "created_at": "2025-01-15",
-      "started_at": "2025-11-16T05:20:53Z"
+      "started_at": "2025-11-16T05:20:53Z",
+      "actual_tokens": 12000,
+      "completed_at": "2025-11-16T16:46:49Z",
+      "completed_by": "task-completer",
+      "quality_score": 91
     },
     {
       "id": "T037",
       "title": "Training Loop Improvements - Gradient Accumulation Support",
       "file": "tasks/T037-training-gradient-accumulation.yaml",
-      "status": "pending",
+      "status": "in_progress",
       "priority": "P2-MVP",
       "phase": "mvp",
       "depends_on": [],
@@ -392,7 +403,8 @@
         "mvp"
       ],
       "estimated_hours": 1.5,
-      "created_at": "2025-01-15"
+      "created_at": "2025-01-15",
+      "started_at": "2025-11-16T20:48:45Z"
     },
     {
       "id": "T038",

@@ -27,6 +27,17 @@ from .metrics_tracker import MetricsTracker
 # Export utilities (Tasks 4.2-4.4)
 from .export_utilities import ONNXExporter, TorchScriptExporter, ModelCardGenerator
 
+# Environment snapshot (Task T016)
+from .environment_snapshot import (
+    capture_environment,
+    save_environment_snapshot,
+    compare_environments,
+    log_environment_to_wandb
+)
+
+# Seed management (Task T015)
+from .seed_manager import set_random_seed, seed_worker, create_seeded_generator
+
 __all__ = [
     # Dataset utilities
     'DatasetLoader',
@@ -46,4 +57,15 @@ __all__ = [
     'ONNXExporter',
     'TorchScriptExporter',
     'ModelCardGenerator',
+
+    # Environment snapshot
+    'capture_environment',
+    'save_environment_snapshot',
+    'compare_environments',
+    'log_environment_to_wandb',
+
+    # Seed management
+    'set_random_seed',
+    'seed_worker',
+    'create_seeded_generator',
 ]
