@@ -93,35 +93,44 @@ def test_fine_tuning(
     model: nn.Module,
     config: Any,
     train_data: Optional[List[torch.Tensor]] = None,
+    val_data: Optional[List[torch.Tensor]] = None,
     n_epochs: int = 3,
     learning_rate: float = 5e-5,
-    batch_size: int = 4
+    batch_size: int = 4,
+    use_wandb: bool = False
 ) -> Dict[str, Any]:
     """
-    Run a basic fine-tuning loop with loss tracking.
+    Run a basic fine-tuning loop with comprehensive metrics tracking.
 
     Demonstrates:
-    - Training loop setup
-    - Gradient clipping
+    - Training loop setup with train/validation splits
+    - Gradient clipping and monitoring
     - Learning rate scheduling
+    - W&B metrics logging (loss, perplexity, accuracy, LR, gradient norms)
+    - System metrics (GPU memory/utilization)
     - Loss convergence tracking
 
     Args:
         model: The transformer model to fine-tune
         config: Model configuration
         train_data: List of input_ids tensors (if None, generates synthetic data)
+        val_data: List of validation input_ids tensors (if None, uses 20% of train)
         n_epochs: Number of training epochs
         learning_rate: Initial learning rate
         batch_size: Batch size for training
+        use_wandb: Whether to log metrics to W&B (default: False)
 
     Returns:
-        Dictionary with training metrics and loss curves
+        Dictionary with training metrics, loss curves, and MetricsTracker summary
     """
     try:
         import matplotlib.pyplot as plt
     except ImportError:
         print("⚠️ matplotlib not installed, skipping visualization")
         plt = None
+
+    # Import MetricsTracker
+    from utils.training.metrics_tracker import MetricsTracker
 
     device = next(model.parameters()).device
     vocab_size = _detect_vocab_size(model, config)
@@ -134,20 +143,32 @@ def test_fine_tuning(
             for _ in range(50)  # 50 samples
         ]
 
+    # Create validation split if not provided
+    if val_data is None:
+        split_idx = int(0.8 * len(train_data))
+        val_data = train_data[split_idx:]
+        train_data = train_data[:split_idx]
+
     print("=" * 60)
     print("FINE-TUNING TEST")
     print("=" * 60)
     print(f"Training samples: {len(train_data)}")
+    print(f"Validation samples: {len(val_data)}")
     print(f"Epochs: {n_epochs}")
     print(f"Learning rate: {learning_rate}")
     print(f"Batch size: {batch_size}")
+    print(f"W&B logging: {use_wandb}")
     print("-" * 60)
+
+    # Initialize metrics tracker
+    metrics_tracker = MetricsTracker(use_wandb=use_wandb)
 
     # Setup optimizer and scheduler
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    total_steps = n_epochs * (len(train_data) // batch_size)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=n_epochs * (len(train_data) // batch_size)
+        T_max=total_steps
     )
 
     model.train()
@@ -158,7 +179,14 @@ def test_fine_tuning(
     start_time = time.time()
 
     for epoch in range(n_epochs):
-        epoch_losses = []
+        epoch_start_time = time.time()
+
+        # Training phase
+        model.train()
+        train_loss_sum = 0.0
+        train_acc_sum = 0.0
+        train_steps = 0
+        max_grad_norm = 0.0
 
         # Shuffle data
         indices = torch.randperm(len(train_data))
@@ -180,23 +208,77 @@ def test_fine_tuning(
                 shift_labels.view(-1)
             )
 
+            # Compute accuracy
+            accuracy = metrics_tracker.compute_accuracy(
+                shift_logits.view(-1, vocab_size),
+                shift_labels.view(-1)
+            )
+
             # Backward pass
             optimizer.zero_grad()
             loss.backward()
 
             # Gradient clipping
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            max_grad_norm = max(max_grad_norm, grad_norm.item())
 
             optimizer.step()
             scheduler.step()
 
             # Track metrics
-            epoch_losses.append(loss.item())
+            train_loss_sum += loss.item()
+            train_acc_sum += accuracy
+            train_steps += 1
             grad_norm_history.append(grad_norm.item())
             loss_history.append(loss.item())
 
-        avg_loss = np.mean(epoch_losses)
-        print(f"Epoch {epoch+1}/{n_epochs}: Loss = {avg_loss:.4f}")
+        # Validation phase
+        model.eval()
+        val_loss_sum = 0.0
+        val_acc_sum = 0.0
+        val_steps = 0
+
+        with torch.no_grad():
+            for val_sample in val_data:
+                val_sample = val_sample.to(device).unsqueeze(0)  # Add batch dim
+
+                logits = _safe_get_model_output(model, val_sample)
+
+                shift_logits = logits[:, :-1, :].contiguous()
+                shift_labels = val_sample[:, 1:].contiguous()
+
+                loss = F.cross_entropy(
+                    shift_logits.view(-1, vocab_size),
+                    shift_labels.view(-1)
+                )
+
+                accuracy = metrics_tracker.compute_accuracy(
+                    shift_logits.view(-1, vocab_size),
+                    shift_labels.view(-1)
+                )
+
+                val_loss_sum += loss.item()
+                val_acc_sum += accuracy
+                val_steps += 1
+
+        # Log epoch metrics
+        epoch_duration = time.time() - epoch_start_time
+        current_lr = scheduler.get_last_lr()[0]
+
+        metrics_tracker.log_epoch(
+            epoch=epoch,
+            train_metrics={
+                'loss': train_loss_sum / train_steps,
+                'accuracy': train_acc_sum / train_steps
+            },
+            val_metrics={
+                'loss': val_loss_sum / val_steps,
+                'accuracy': val_acc_sum / val_steps
+            },
+            learning_rate=current_lr,
+            gradient_norm=max_grad_norm,
+            epoch_duration=epoch_duration
+        )
 
     training_time = time.time() - start_time
 
@@ -213,34 +295,73 @@ def test_fine_tuning(
         "initial_loss": loss_history[0],
         "training_time_seconds": training_time,
         "samples_per_second": len(train_data) * n_epochs / training_time,
+        "metrics_summary": metrics_tracker.get_summary(),
+        "best_epoch": metrics_tracker.get_best_epoch('val/loss', 'min')
     }
 
     # Visualization
     if plt is not None:
-        fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
-        # Loss curve
-        axes[0].plot(loss_history, linewidth=2, alpha=0.7)
-        axes[0].set_xlabel('Training Step')
-        axes[0].set_ylabel('Loss')
-        axes[0].set_title('Training Loss Curve')
-        axes[0].grid(True, alpha=0.3)
+        # Loss curve (step-level)
+        axes[0, 0].plot(loss_history, linewidth=2, alpha=0.7)
+        axes[0, 0].set_xlabel('Training Step')
+        axes[0, 0].set_ylabel('Loss')
+        axes[0, 0].set_title('Training Loss Curve (Step-Level)')
+        axes[0, 0].grid(True, alpha=0.3)
 
         # Add epoch markers
         steps_per_epoch = len(train_data) // batch_size
         for e in range(1, n_epochs):
-            axes[0].axvline(x=e * steps_per_epoch, color='r',
-                           linestyle='--', alpha=0.5, linewidth=1)
+            axes[0, 0].axvline(
+                x=e * steps_per_epoch, color='r',
+                linestyle='--', alpha=0.5, linewidth=1
+            )
+
+        # Epoch-level metrics (train vs val loss)
+        df = metrics_tracker.get_summary()
+        axes[0, 1].plot(
+            df['epoch'], df['train/loss'], marker='o',
+            label='Train Loss', linewidth=2
+        )
+        axes[0, 1].plot(
+            df['epoch'], df['val/loss'], marker='s',
+            label='Val Loss', linewidth=2
+        )
+        axes[0, 1].set_xlabel('Epoch')
+        axes[0, 1].set_ylabel('Loss')
+        axes[0, 1].set_title('Train vs Validation Loss')
+        axes[0, 1].legend()
+        axes[0, 1].grid(True, alpha=0.3)
 
         # Gradient norm
-        axes[1].plot(grad_norm_history, linewidth=2, alpha=0.7, color='orange')
-        axes[1].set_xlabel('Training Step')
-        axes[1].set_ylabel('Gradient Norm')
-        axes[1].set_title('Gradient Norm (after clipping)')
-        axes[1].grid(True, alpha=0.3)
-        axes[1].axhline(y=1.0, color='r', linestyle='--',
-                       linewidth=1, label='Clip threshold')
-        axes[1].legend()
+        axes[1, 0].plot(
+            grad_norm_history, linewidth=2, alpha=0.7, color='orange'
+        )
+        axes[1, 0].set_xlabel('Training Step')
+        axes[1, 0].set_ylabel('Gradient Norm')
+        axes[1, 0].set_title('Gradient Norm (after clipping)')
+        axes[1, 0].grid(True, alpha=0.3)
+        axes[1, 0].axhline(
+            y=1.0, color='r', linestyle='--',
+            linewidth=1, label='Clip threshold'
+        )
+        axes[1, 0].legend()
+
+        # Perplexity
+        axes[1, 1].plot(
+            df['epoch'], df['train/perplexity'], marker='o',
+            label='Train PPL', linewidth=2
+        )
+        axes[1, 1].plot(
+            df['epoch'], df['val/perplexity'], marker='s',
+            label='Val PPL', linewidth=2
+        )
+        axes[1, 1].set_xlabel('Epoch')
+        axes[1, 1].set_ylabel('Perplexity')
+        axes[1, 1].set_title('Train vs Validation Perplexity')
+        axes[1, 1].legend()
+        axes[1, 1].grid(True, alpha=0.3)
 
         plt.tight_layout()
         plt.show()

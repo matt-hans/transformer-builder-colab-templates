@@ -2,7 +2,7 @@
 Training infrastructure for production-ready model training.
 
 Includes dataset loading, checkpoint management, training coordination,
-and export utilities for ONNX and TorchScript.
+metrics tracking with W&B integration, and export utilities for ONNX and TorchScript.
 """
 
 # Dataset utilities (Tasks 3.1-3.2)
@@ -21,6 +21,9 @@ except ImportError:
     TrainingCoordinator = None
     train_model = None
 
+# Metrics tracking (Task T002)
+from .metrics_tracker import MetricsTracker
+
 # Export utilities (Tasks 4.2-4.4)
 from .export_utilities import ONNXExporter, TorchScriptExporter, ModelCardGenerator
 
@@ -35,6 +38,9 @@ __all__ = [
     # Training
     'TrainingCoordinator',
     'train_model',
+
+    # Metrics tracking
+    'MetricsTracker',
 
     # Export
     'ONNXExporter',

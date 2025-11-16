@@ -13,14 +13,25 @@ from .adaptive_tokenizer import AdaptiveTokenizer
 from .bpe_trainer import FastBPETrainer, BPETrainerConfig
 from .character_tokenizer import CharacterLevelTokenizer
 from .validator import TokenizerValidator
-from .data_module import AdaptiveTokenizerDataModule, SimpleDataModule
 
-__all__ = [
-    'AdaptiveTokenizer',
-    'FastBPETrainer',
-    'BPETrainerConfig',
-    'CharacterLevelTokenizer',
-    'TokenizerValidator',
-    'AdaptiveTokenizerDataModule',
-    'SimpleDataModule',
-]
+# Conditional imports for optional PyTorch Lightning integration
+try:
+    from .data_module import AdaptiveTokenizerDataModule, SimpleDataModule
+    __all__ = [
+        'AdaptiveTokenizer',
+        'FastBPETrainer',
+        'BPETrainerConfig',
+        'CharacterLevelTokenizer',
+        'TokenizerValidator',
+        'AdaptiveTokenizerDataModule',
+        'SimpleDataModule',
+    ]
+except ImportError:
+    # PyTorch Lightning not available - skip data modules
+    __all__ = [
+        'AdaptiveTokenizer',
+        'FastBPETrainer',
+        'BPETrainerConfig',
+        'CharacterLevelTokenizer',
+        'TokenizerValidator',
+    ]

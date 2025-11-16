@@ -43,6 +43,53 @@ from utils.test_functions import run_all_tier1_tests
 run_all_tier1_tests(model, config)
 ```
 
+### Using MetricsTracker for Training with W&B
+```python
+from utils.training.metrics_tracker import MetricsTracker
+from utils.tier3_training_utilities import test_fine_tuning
+
+# Initialize W&B (optional)
+import wandb
+wandb.init(project="transformer-training", name="my-experiment")
+
+# Run training with metrics tracking
+results = test_fine_tuning(
+    model=model,
+    config=config,
+    n_epochs=10,
+    learning_rate=5e-5,
+    batch_size=4,
+    use_wandb=True  # Log to W&B
+)
+
+# Access metrics summary
+df = results['metrics_summary']
+print(df[['epoch', 'train/loss', 'val/loss', 'val/perplexity']])
+
+# Get best epoch for early stopping
+best_epoch = results['best_epoch']
+print(f"Best model at epoch {best_epoch}")
+
+# Or use MetricsTracker standalone
+tracker = MetricsTracker(use_wandb=True)
+
+# In your training loop
+for epoch in range(n_epochs):
+    # ... training code ...
+    tracker.log_epoch(
+        epoch=epoch,
+        train_metrics={'loss': train_loss, 'accuracy': train_acc},
+        val_metrics={'loss': val_loss, 'accuracy': val_acc},
+        learning_rate=current_lr,
+        gradient_norm=max_grad,
+        epoch_duration=epoch_time
+    )
+
+# Export metrics for analysis
+summary_df = tracker.get_summary()
+summary_df.to_csv('training_metrics.csv', index=False)
+```
+
 ## Architecture & Code Organization
 
 ### Three-Tier Testing Architecture
@@ -61,7 +108,8 @@ The codebase implements a progressive testing suite with increasing complexity:
 
 3. **Tier 3: Training Utilities** (`utils/tier3_training_utilities.py`)
    - Time-intensive (5-120 minutes) training and optimization tests
-   - Tests: fine-tuning loop, hyperparameter search (Optuna), GLUE benchmarks
+   - Tests: fine-tuning loop with metrics tracking, hyperparameter search (Optuna), GLUE benchmarks
+   - Includes `MetricsTracker` for comprehensive W&B logging (loss, perplexity, accuracy, LR, gradients, GPU metrics)
    - For production training workflows
 
 ### Module Facade Pattern
