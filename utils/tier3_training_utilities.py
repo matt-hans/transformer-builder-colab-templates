@@ -413,7 +413,10 @@ def test_hyperparameter_search(
         print("⚠️ pandas not installed, returning dict instead of DataFrame")
         pd = None
 
-    vocab_size = _detect_vocab_size(model, config)
+    # Instantiate a temporary model to detect vocab_size
+    temp_model = model_factory()
+    vocab_size = _detect_vocab_size(temp_model, config)
+    del temp_model  # Free memory
 
     # Generate synthetic data if needed
     if train_data is None:
