@@ -585,6 +585,12 @@ if HAS_LIGHTNING:
 
         # Log metrics
         self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True)
+        # Train perplexity (epoch-level), with numerical stability clamp
+        try:
+            ppl = torch.exp(torch.clamp(loss.detach(), max=torch.tensor(20.0, device=loss.device)))
+            self.log('train_perplexity', ppl, prog_bar=True, on_step=False, on_epoch=True)
+        except Exception:
+            pass
 
         return loss
 
@@ -610,8 +616,8 @@ if HAS_LIGHTNING:
         # Log metrics
         self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
 
-        # Compute perplexity
-        perplexity = torch.exp(loss)
+        # Compute perplexity with numerical stability clamp
+        perplexity = torch.exp(torch.clamp(loss.detach(), max=torch.tensor(20.0, device=loss.device)))
         self.log('val_perplexity', perplexity, prog_bar=True, on_step=False, on_epoch=True)
 
         return loss

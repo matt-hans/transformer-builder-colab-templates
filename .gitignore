@@ -25,3 +25,16 @@ Thumbs.db
 # Test outputs
 *.log
 test_outputs/
+
+# Task management system
+.tasks/completed/
+.tasks/updates/
+.tasks/.wandb/
+
+# W&B experiment tracking
+.wandb/
+wandb/
+
+# Temporary files
+*.tmp
+*.temp

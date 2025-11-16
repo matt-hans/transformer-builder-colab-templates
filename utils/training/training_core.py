@@ -97,6 +97,8 @@ class TrainingCoordinator:
               dataset: Optional[Union[str, Dataset]] = None,
               dataset_path: Optional[str] = None,
               config_name: Optional[str] = None,
+              val_dataset: Optional[Union[str, Dataset]] = None,
+              val_config_name: Optional[str] = None,
               vocab_size: int = 50257,
               batch_size: int = 16,
               max_length: int = 512,
@@ -104,13 +106,20 @@ class TrainingCoordinator:
               max_epochs: int = 3,
               val_split: float = 0.1,
               accumulate_grad_batches: int = 1,
-              early_stopping_patience: Optional[int] = None,
+              early_stopping_patience: Optional[int] = 5,
+              early_stopping_min_delta: float = 0.0,
               save_top_k: int = 3,
+              save_every_n_epochs: int = 1,
               num_workers: int = 2,
+              dataset_cache_dir: Optional[str] = None,
               tokenizer: Optional[Any] = None,
               datamodule: Optional[Any] = None,
               resume_from_checkpoint: Optional[str] = None,
-              seed: int = 42) -> Dict[str, Any]:
+              seed: int = 42,
+              deterministic: bool = False,
+              use_amp: Optional[bool] = None,
+              drive_backup: bool = False,
+              drive_base_dir: Optional[str] = None) -> Dict[str, Any]:
         """
         Train model end-to-end.
 
@@ -119,6 +128,8 @@ class TrainingCoordinator:
             dataset: HuggingFace dataset name OR Dataset object
             dataset_path: Path to local dataset file
             config_name: HuggingFace dataset config (e.g., 'wikitext-2-raw-v1')
+            val_dataset: Optional separate validation dataset (HF name or Dataset)
+            val_config_name: Optional config name for validation dataset
             vocab_size: Vocabulary size for tokenizer
             batch_size: Training batch size
             max_length: Maximum sequence length
@@ -156,8 +167,11 @@ class TrainingCoordinator:
         print("🚀 Training Coordinator")
         print("=" * 80)
 
-        # Set seed
-        pl.seed_everything(seed)
+        # Set seed for reproducibility
+        # Use our comprehensive seed management instead of pl.seed_everything()
+        # to ensure DataLoader workers and all randomness sources are seeded
+        from .seed_manager import set_random_seed
+        set_random_seed(seed, deterministic=deterministic)
 
         # Step 1: Load dataset (if not using pre-created datamodule)
         if datamodule is None:
@@ -167,7 +181,7 @@ class TrainingCoordinator:
             if dataset is not None:
                 if isinstance(dataset, str):
                     # Load from HuggingFace
-                    loader = DatasetLoader()
+                    loader = DatasetLoader(cache_dir=dataset_cache_dir)
                     dataset_obj = loader.load_huggingface(
                         dataset,
                         config_name=config_name,
@@ -195,6 +209,19 @@ class TrainingCoordinator:
                     dataset=dataset_obj
                 )
 
+            # Optional: separate validation dataset
+            val_dataset_obj = None
+            if val_dataset is not None:
+                if isinstance(val_dataset, str):
+                    loader = DatasetLoader()
+                    val_dataset_obj = loader.load_huggingface(
+                        val_dataset,
+                        config_name=val_config_name,
+                        split='validation'
+                    )
+                else:
+                    val_dataset_obj = val_dataset
+
             # Step 3: Create DataModule
             print("\n📦 Step 3: Preparing DataModule")
             print("-" * 80)
@@ -205,7 +232,9 @@ class TrainingCoordinator:
                 batch_size=batch_size,
                 max_length=max_length,
                 val_split=val_split,
-                num_workers=num_workers
+                num_workers=num_workers,
+                seed=seed,
+                external_val_dataset=val_dataset_obj
             )
 
         # Step 4: Wrap model with adapter
@@ -230,15 +259,42 @@ class TrainingCoordinator:
         callbacks = []
 
         # Checkpoint callback
+        from datetime import datetime
         checkpoint_manager = CheckpointManager(
             checkpoint_dir=str(self.checkpoint_dir),
             save_top_k=save_top_k,
             monitor='val_loss',
             mode='min',
-            save_last=True
+            save_last=True,
+            save_every_n_epochs=save_every_n_epochs,
+            drive_backup=drive_backup,
+            drive_backup_path=(
+                (drive_base_dir or 'MyDrive/transformer-checkpoints') +
+                f"/run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            ) if drive_backup else None
         )
         checkpoint_callback = checkpoint_manager.get_callback()
         callbacks.append(checkpoint_callback)
+
+        # Best state_dict saver (saves best.pt on metric improvement)
+        try:
+            from .checkpoint_manager import BestStateDictCallback
+            callbacks.append(BestStateDictCallback(
+                checkpoint_dir=self.checkpoint_dir,
+                metric_name='val_loss',
+                mode='min'
+            ))
+        except Exception:
+            pass
+
+        # Optional Google Drive backup
+        backup_cb = checkpoint_manager.get_backup_callback()
+        if backup_cb is not None:
+            callbacks.append(backup_cb)
+            print(f"  Drive backup: enabled → {checkpoint_manager.drive_backup_path}")
+        else:
+            if drive_backup:
+                print("  Drive backup: requested but not available (non-Colab env)")
 
         # Early stopping
         if early_stopping_patience is not None:
@@ -246,10 +302,22 @@ class TrainingCoordinator:
                 monitor='val_loss',
                 patience=early_stopping_patience,
                 mode='min',
+                min_delta=early_stopping_min_delta,
                 verbose=True
             )
             callbacks.append(early_stop)
-            print(f"  Early stopping: patience={early_stopping_patience}")
+            print(f"  Early stopping: patience={early_stopping_patience}, min_delta={early_stopping_min_delta}")
+
+            # Add W&B logger for early stopping event/status (non-blocking)
+            try:
+                from .early_stopping import EarlyStoppingWandbCallback
+                callbacks.append(EarlyStoppingWandbCallback(
+                    patience=early_stopping_patience,
+                    min_delta=early_stopping_min_delta,
+                    mode='min'
+                ))
+            except Exception:
+                pass
 
         # Learning rate monitor
         lr_monitor = LearningRateMonitor(logging_interval='step')
@@ -264,7 +332,16 @@ class TrainingCoordinator:
         print(f"  Max epochs: {max_epochs}")
         print(f"  Batch size: {batch_size}")
         print(f"  Gradient accumulation: {accumulate_grad_batches}")
-        print(f"  Precision: {self.precision}")
+        # Determine precision based on use_amp and environment
+        from .amp_utils import compute_effective_precision
+        effective_precision = compute_effective_precision(
+            requested_precision=self.precision,
+            use_amp=use_amp,
+            cuda_available=torch.cuda.is_available(),
+            use_gpu=self.use_gpu,
+        )
+
+        print(f"  Precision: {effective_precision}")
         print(f"  Gradient clip: {self.gradient_clip_val}")
         print(f"  Checkpoint dir: {self.checkpoint_dir}")
 
@@ -280,7 +357,7 @@ class TrainingCoordinator:
             max_epochs=max_epochs,
             accelerator=accelerator,
             devices=devices,
-            precision=self.precision,
+            precision=effective_precision,
             gradient_clip_val=self.gradient_clip_val,
             accumulate_grad_batches=accumulate_grad_batches,
             callbacks=callbacks,
@@ -290,6 +367,22 @@ class TrainingCoordinator:
             log_every_n_steps=10,
             val_check_interval=1.0,
         )
+
+        # AMP monitoring (W&B): log enabled flag, precision, and loss scale when available
+        try:
+            from .amp_utils import AmpWandbCallback
+            amp_cb = AmpWandbCallback(enabled=(effective_precision in ('16', '16-mixed', '16_true')),
+                                      precision=effective_precision)
+            callbacks.append(amp_cb)
+            # Also update W&B config if active
+            try:
+                import wandb  # type: ignore
+                if getattr(wandb, 'run', None):
+                    wandb.config.update({'amp_enabled': amp_cb.enabled, 'amp_precision': amp_cb.precision}, allow_val_change=True)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
         # Train
         trainer.fit(
@@ -316,6 +409,29 @@ class TrainingCoordinator:
                 value = value.item()
             print(f"  {key}: {value:.4f}")
 
+        # Best validation perplexity (from best val_loss)
+        best_score = getattr(checkpoint_callback, 'best_model_score', None)
+        try:
+            if best_score is not None:
+                bs = best_score.item() if hasattr(best_score, 'item') else float(best_score)
+                import math
+                best_ppl = math.exp(min(bs, 20.0))
+                print(f"  Best val perplexity (from best val_loss): {best_ppl:.2f}")
+                # Log to W&B summary if active
+                try:
+                    import wandb
+                    if getattr(wandb, 'run', None):
+                        wandb.run.summary['best_val_perplexity'] = best_ppl
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Baseline references (approximate)
+        print("\n📎 Perplexity Baselines (approx.):")
+        print("  • GPT-2 small (WikiText-103): ~26")
+        print("  • GPT-2 medium: ~19 | GPT-2 large: ~17")
+
         # TensorBoard info
         print(f"\n📈 View training progress:")
         print(f"  tensorboard --logdir {self.log_dir}")
@@ -331,6 +447,69 @@ class TrainingCoordinator:
         }
 
         return results
+
+    def export_state_dict(self,
+                          results: Dict[str, Any],
+                          output_dir: str = './exported_model',
+                          upload_to_drive: bool = False,
+                          drive_subdir: str = 'MyDrive/exported-models') -> str:
+        """
+        Convenience wrapper to export a trained model to PyTorch state_dict.
+
+        Args:
+            results: Training results dict returned by train()
+            output_dir: Local export directory
+            upload_to_drive: Copy export to Google Drive when running in Colab
+            drive_subdir: Drive subdirectory to copy into
+
+        Returns:
+            Path to export directory
+        """
+        from .export_utilities import export_state_dict
+
+        model = results.get('model')
+        tokenizer = results.get('tokenizer')
+        final_metrics = results.get('final_metrics', {})
+
+        # Attempt to retrieve config from adapter or model
+        cfg = None
+        if hasattr(model, 'config'):
+            cfg = getattr(model, 'config')
+
+        export_path = export_state_dict(
+            model=model,
+            output_dir=output_dir,
+            config=cfg,
+            tokenizer=tokenizer,
+            metrics=final_metrics,
+            upload_to_drive=upload_to_drive,
+            drive_subdir=drive_subdir
+        )
+        print(f"📦 Export complete: {export_path}")
+        return export_path
+
+    def publish_to_hub(self,
+                       results: Dict[str, Any],
+                       repo_name: str,
+                       private: bool = False,
+                       commit_message: str = 'Upload trained model') -> Optional[str]:
+        """
+        Convenience wrapper to push the trained model to HuggingFace Hub.
+        Requires huggingface_hub; degrades gracefully if unavailable.
+        """
+        from .hf_hub import push_model_to_hub
+        model = results.get('model')
+        tokenizer = results.get('tokenizer')
+        final_metrics = results.get('final_metrics', {})
+        cfg = getattr(model, 'config', None)
+        return push_model_to_hub(
+            model=model,
+            config=cfg,
+            training_results=final_metrics,
+            repo_name=repo_name,
+            private=private,
+            commit_message=commit_message
+        )
 
     def quick_train(self,
                    model: torch.nn.Module,

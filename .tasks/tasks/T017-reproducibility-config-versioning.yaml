@@ -1,0 +1,387 @@
+---
+id: T017
+title: "Reproducibility - Training Configuration Versioning"
+status: pending
+priority: P2
+dependencies: [T015]
+tags: [mlops, reproducibility, mvp, phase-1]
+estimated_tokens: 7000
+actual_tokens: 0
+created_at: "2025-01-15"
+updated_at: "2025-01-15"
+---
+
+## Description
+
+Save complete training configuration (hyperparameters, model architecture, dataset settings) as versioned JSON files. Enables exact reproduction of any training run's configuration.
+
+## Business Context
+
+**Problem**: Users forget hyperparameters used in successful experiments. Configuration scattered across notebook cells, making reproduction difficult.
+
+**Value**: Single source of truth for all training settings. Load any past configuration and rerun training exactly.
+
+**User Story**: As an ML researcher, I want my training configuration automatically saved so that I can reproduce experiments months later without remembering every hyperparameter.
+
+## Acceptance Criteria
+
+1. [ ] Create TrainingConfig dataclass with all hyperparameters
+2. [ ] Save config as JSON before training starts
+3. [ ] Include model architecture params in config
+4. [ ] Include dataset params (name, split, preprocessing)
+5. [ ] Add config validation (check required fields, valid ranges)
+6. [ ] Log config to W&B
+7. [ ] Create config loading utility
+8. [ ] Add config diff comparison tool
+9. [ ] Version configs with timestamp or hash
+10. [ ] Test: Load old config and resume training
+
+## Test Scenarios
+
+### Scenario 1: Config Save and Load
+```
+Given: Training with LR=5e-5, batch_size=4, epochs=10
+When: Training starts
+Then: config_20250115_143022.json saved with all params
+  And: Config includes model architecture (vocab_size, layers, etc.)
+  And: Config includes dataset (wikitext-103)
+  And: Can load config later and recreate training
+```
+
+### Scenario 2: Config Validation
+```
+Given: Config with learning_rate=-0.001 (invalid, negative)
+When: Config validated before training
+Then: ValidationError raised: "learning_rate must be positive"
+  And: Training does not start
+  And: User sees clear error message
+```
+
+### Scenario 3: Config Diff
+```
+Given: config_v1.json with LR=5e-5, batch_size=4
+  And: config_v2.json with LR=1e-4, batch_size=8
+When: Configs compared
+Then: Diff shows: LR changed (5e-5 → 1e-4), batch_size changed (4 → 8)
+  And: User can identify what changed between experiments
+```
+
+## Technical Implementation
+
+```python
+# Training Configuration Dataclass
+
+from dataclasses import dataclass, asdict, field
+from typing import Optional, Literal
+import json
+from datetime import datetime
+from pathlib import Path
+
+@dataclass
+class TrainingConfig:
+    """Complete training configuration for reproducibility."""
+
+    # === Random Seed ===
+    random_seed: int = 42
+    deterministic: bool = False
+
+    # === Hyperparameters ===
+    learning_rate: float = 5e-5
+    batch_size: int = 4
+    epochs: int = 10
+    warmup_ratio: float = 0.1
+    weight_decay: float = 0.01
+    max_grad_norm: float = 1.0
+
+    # === Training Features ===
+    use_amp: bool = True  # Mixed precision
+    gradient_accumulation_steps: int = 1
+    early_stopping_patience: int = 5
+    validation_split: float = 0.1
+
+    # === Model Architecture ===
+    model_name: str = "custom-transformer"
+    model_type: Literal["gpt", "bert", "t5", "custom"] = "gpt"
+    vocab_size: int = 50257
+    max_seq_len: int = 128
+    d_model: int = 768
+    num_layers: int = 12
+    num_heads: int = 12
+    d_ff: int = 3072
+    dropout: float = 0.1
+
+    # === Dataset ===
+    dataset_name: str = "wikitext-103-v1"
+    dataset_split: str = "train"
+    dataset_subset: Optional[str] = None
+    max_train_samples: Optional[int] = None
+    max_val_samples: Optional[int] = None
+
+    # === Checkpointing ===
+    checkpoint_dir: str = "/content/drive/MyDrive/transformer-checkpoints"
+    save_every_n_epochs: int = 5
+    keep_best_only: bool = False
+
+    # === Experiment Tracking ===
+    wandb_project: str = "transformer-builder-training"
+    wandb_entity: Optional[str] = None
+    run_name: Optional[str] = None
+
+    # === Metadata ===
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    config_version: str = "1.0"
+    notes: str = ""
+
+    def validate(self):
+        """Validate configuration values."""
+        errors = []
+
+        # Validate numeric ranges
+        if self.learning_rate <= 0:
+            errors.append("learning_rate must be positive")
+        if self.batch_size < 1:
+            errors.append("batch_size must be >= 1")
+        if self.epochs < 1:
+            errors.append("epochs must be >= 1")
+        if self.warmup_ratio < 0 or self.warmup_ratio > 1:
+            errors.append("warmup_ratio must be in [0, 1]")
+        if self.validation_split < 0 or self.validation_split > 0.5:
+            errors.append("validation_split must be in [0, 0.5]")
+
+        # Validate model architecture
+        if self.vocab_size < 1:
+            errors.append("vocab_size must be >= 1")
+        if self.max_seq_len < 1:
+            errors.append("max_seq_len must be >= 1")
+        if self.d_model < 1 or self.d_model % self.num_heads != 0:
+            errors.append(f"d_model ({self.d_model}) must be divisible by num_heads ({self.num_heads})")
+
+        if errors:
+            raise ValueError(f"Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
+
+        return True
+
+    def save(self, path: Optional[str] = None) -> str:
+        """
+        Save configuration to JSON file.
+
+        Args:
+            path: Optional custom path, or auto-generate timestamped path
+
+        Returns:
+            save_path: Path where config was saved
+        """
+        if path is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = f"config_{timestamp}.json"
+
+        with open(path, 'w') as f:
+            json.dump(asdict(self), f, indent=2)
+
+        print(f"✅ Configuration saved to {path}")
+        return path
+
+    @classmethod
+    def load(cls, path: str) -> 'TrainingConfig':
+        """Load configuration from JSON file."""
+        with open(path, 'r') as f:
+            config_dict = json.load(f)
+
+        config = cls(**config_dict)
+        print(f"✅ Configuration loaded from {path}")
+        return config
+
+    def to_dict(self):
+        """Convert to dictionary."""
+        return asdict(self)
+
+
+# Config Management Utilities
+
+def compare_configs(config1: TrainingConfig, config2: TrainingConfig) -> dict:
+    """
+    Compare two configurations and return differences.
+
+    Returns:
+        diff: dict with changed, added, removed fields
+    """
+    dict1 = config1.to_dict()
+    dict2 = config2.to_dict()
+
+    all_keys = set(dict1.keys()) | set(dict2.keys())
+
+    differences = {
+        'changed': {},
+        'added': {},
+        'removed': {},
+    }
+
+    for key in all_keys:
+        v1 = dict1.get(key)
+        v2 = dict2.get(key)
+
+        if key in ['created_at', 'run_name']:  # Skip metadata fields
+            continue
+
+        if v1 is None:
+            differences['added'][key] = v2
+        elif v2 is None:
+            differences['removed'][key] = v1
+        elif v1 != v2:
+            differences['changed'][key] = (v1, v2)
+
+    # Print summary
+    if differences['changed']:
+        print("🔍 Configuration Differences:")
+        for key, (old, new) in differences['changed'].items():
+            print(f"  {key}: {old} → {new}")
+
+    return differences
+
+
+# Integration in Training
+
+# Create configuration
+config = TrainingConfig(
+    # Hyperparameters
+    learning_rate=5e-5,
+    batch_size=4,
+    epochs=10,
+    warmup_ratio=0.1,
+    weight_decay=0.01,
+
+    # Model architecture
+    model_name="gpt-50M-wikitext",
+    model_type="gpt",
+    vocab_size=50257,
+    max_seq_len=128,
+    d_model=512,
+    num_layers=8,
+    num_heads=8,
+
+    # Dataset
+    dataset_name="wikitext-103-v1",
+    validation_split=0.1,
+
+    # Experiment tracking
+    wandb_project="transformer-builder-training",
+    run_name=f"gpt-50M-{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+
+    # Notes
+    notes="Testing early stopping with patience=5",
+)
+
+# Validate configuration
+try:
+    config.validate()
+    print("✅ Configuration valid")
+except ValueError as e:
+    print(f"❌ Configuration invalid:\n{e}")
+    raise
+
+# Save configuration
+config_path = config.save()  # Auto-generates timestamped filename
+
+# Save to specific location (for checkpointing)
+config.save("./checkpoints/training_config.json")
+
+# Log to W&B
+if wandb.run:
+    wandb.config.update(config.to_dict())
+
+    # Also save as W&B artifact
+    config_artifact = wandb.Artifact(
+        name=f"{wandb.run.name}-config",
+        type="config",
+        description="Training configuration",
+    )
+    config_artifact.add_file(config_path)
+    wandb.log_artifact(config_artifact)
+
+print(f"🎯 Training with configuration:")
+print(f"   LR: {config.learning_rate}")
+print(f"   Batch size: {config.batch_size}")
+print(f"   Epochs: {config.epochs}")
+print(f"   Model: {config.model_type} ({config.num_layers} layers)")
+print(f"   Dataset: {config.dataset_name}")
+
+
+# Loading Old Configuration
+
+def resume_from_config(config_path: str):
+    """Resume training from saved configuration."""
+
+    # Load config
+    config = TrainingConfig.load(config_path)
+
+    # Validate
+    config.validate()
+
+    # Set seed from config
+    set_random_seed(config.random_seed, config.deterministic)
+
+    # Initialize W&B with same config
+    wandb.init(
+        project=config.wandb_project,
+        name=config.run_name + "-resumed",
+        tags=["resumed"],
+        config=config.to_dict(),
+    )
+
+    # ... rest of training setup using config ...
+
+    print(f"✅ Resumed training from config: {config_path}")
+    return config
+```
+
+## Dependencies
+
+- **T015**: Seed Management (config includes seed settings)
+
+## Design Decisions
+
+**Decision 1**: Use dataclass with validation
+- **Rationale**: Type safety, automatic dict conversion, easy validation
+- **Alternative considered**: Plain dict (no type checking, error-prone)
+- **Trade-off**: Slightly more boilerplate, but much safer
+
+**Decision 2**: Auto-generate timestamped filenames
+- **Rationale**: Prevents accidental overwrites, tracks config evolution
+- **Alternative considered**: Single config.json file (loses history)
+- **Trade-off**: More files to manage, but full history preserved
+
+**Decision 3**: Include model architecture in training config
+- **Rationale**: Complete picture needed for reproduction
+- **Alternative considered**: Separate model config (fragmented)
+- **Trade-off**: Larger config file, but single source of truth
+
+## Risks & Mitigations
+
+### Risk 1: Config Drift
+- **Impact**: MEDIUM - Config file out of sync with code
+- **Likelihood**: MEDIUM - Users update code but forget config
+- **Mitigation**: Validate config before training, fail fast on missing fields
+
+### Risk 2: Too Many Config Files
+- **Impact**: LOW - Directory cluttered with configs
+- **Likelihood**: HIGH - New config every run
+- **Mitigation**: Save to organized directory, cleanup old configs, use W&B artifacts
+
+## Progress Log
+
+- [ ] Created task specification
+- [ ] Implemented TrainingConfig dataclass
+- [ ] Added validation
+- [ ] Created save/load utilities
+- [ ] Added config diff comparison
+- [ ] Tested config reproduction
+- [ ] Committed with message: "feat(reproducibility): add training configuration versioning"
+
+## Completion Checklist
+
+- [ ] All acceptance criteria met (10/10)
+- [ ] All test scenarios pass (3/3)
+- [ ] Code follows style guide
+- [ ] Documentation complete
+- [ ] Tested in Colab
+- [ ] Git committed

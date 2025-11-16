@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader
 from datasets import Dataset
 from typing import Optional, Union
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast, default_data_collator
+from ..training.seed_manager import seed_worker, create_seeded_generator
 
 
 if HAS_LIGHTNING:
@@ -50,7 +51,11 @@ if HAS_LIGHTNING:
                      max_length: int = 512,
                      val_split: float = 0.1,
                      num_workers: int = 2,
-                     text_column: str = 'text'):
+                     seed: int = 42,
+                     text_column: str = 'text',
+                     external_val_dataset: Optional[Dataset] = None,
+                     use_dynamic_collator: bool = False,
+                     padding_side: str = 'right'):
             """
             Initialize DataModule.
     
@@ -71,6 +76,10 @@ if HAS_LIGHTNING:
             self.val_split = val_split
             self.num_workers = num_workers
             self.text_column = text_column
+            self.seed = seed
+            self.external_val_dataset = external_val_dataset
+            self.use_dynamic_collator = use_dynamic_collator
+            self.padding_side = padding_side
     
             # Will be set in setup()
             self.train_dataset = None
@@ -92,18 +101,55 @@ if HAS_LIGHTNING:
                 # Tokenize dataset
                 tokenized_dataset = self._tokenize_dataset()
     
-                # Split into train/val
-                if self.val_split > 0:
-                    split = tokenized_dataset.train_test_split(
-                        test_size=self.val_split,
-                        seed=42
+                # Split into train/val unless external val dataset is provided
+                if self.external_val_dataset is not None:
+                    # Tokenize external validation dataset
+                    ext_val = self.external_val_dataset
+
+                    def _tok_one(examples):
+                        if hasattr(self.tokenizer, '__call__'):
+                            return self.tokenizer(
+                                examples[self.text_column],
+                                padding='max_length',
+                                truncation=True,
+                                max_length=self.max_length,
+                                return_tensors=None
+                            )
+                        else:
+                            tok = {'input_ids': [], 'attention_mask': []}
+                            for text in examples[self.text_column]:
+                                encoded = self.tokenizer.encode(
+                                    text,
+                                    max_length=self.max_length,
+                                    padding='max_length',
+                                    truncation=True
+                                )
+                                tok['input_ids'].append(encoded['input_ids'].tolist())
+                                tok['attention_mask'].append(encoded['attention_mask'].tolist())
+                            return tok
+
+                    tokenized_val = ext_val.map(
+                        _tok_one,
+                        batched=True,
+                        remove_columns=ext_val.column_names,
+                        desc="Tokenizing (val)"
                     )
-                    self.train_dataset = split['train']
-                    self.val_dataset = split['test']
-                else:
-                    # No validation split
+                    tokenized_val.set_format(type='torch', columns=['input_ids', 'attention_mask', 'labels'])
+
                     self.train_dataset = tokenized_dataset
-                    self.val_dataset = None
+                    self.val_dataset = tokenized_val
+                else:
+                    if self.val_split > 0:
+                        split = tokenized_dataset.train_test_split(
+                            test_size=self.val_split,
+                            seed=self.seed
+                        )
+                        self.train_dataset = split['train']
+                        self.val_dataset = split['test']
+                    else:
+                        # No validation split
+                        self.train_dataset = tokenized_dataset
+                        self.val_dataset = None
     
                 print(f"✓ Dataset prepared:")
                 print(f"  Training samples: {len(self.train_dataset):,}")
@@ -171,13 +217,18 @@ if HAS_LIGHTNING:
             Returns:
                 Training DataLoader
             """
+            # Create seeded generator for reproducible shuffling
+            generator = create_seeded_generator(self.seed)
+
             return DataLoader(
                 self.train_dataset,
                 batch_size=self.batch_size,
                 shuffle=True,
                 num_workers=self.num_workers,
                 collate_fn=default_data_collator,
-                pin_memory=True
+                pin_memory=True,
+                worker_init_fn=seed_worker,
+                generator=generator
             )
     
         def val_dataloader(self) -> Optional[DataLoader]:
@@ -190,13 +241,18 @@ if HAS_LIGHTNING:
             if self.val_dataset is None:
                 return None
     
+            # Create seeded generator (not used when shuffle=False but harmless)
+            generator = create_seeded_generator(self.seed)
+
             return DataLoader(
                 self.val_dataset,
                 batch_size=self.batch_size,
                 shuffle=False,
                 num_workers=self.num_workers,
                 collate_fn=default_data_collator,
-                pin_memory=True
+                pin_memory=True,
+                worker_init_fn=seed_worker,
+                generator=generator
             )
     
         def get_sample_batch(self, split: str = 'train', num_samples: int = 1) -> dict:
@@ -258,12 +314,21 @@ if HAS_LIGHTNING:
     
         def train_dataloader(self) -> DataLoader:
             """Create training dataloader."""
+            # Choose collator
+            collate_fn = default_data_collator
+            if self.use_dynamic_collator:
+                try:
+                    from .data_collator import LanguageModelingDataCollator
+                    collate_fn = LanguageModelingDataCollator(self.tokenizer, mlm=False, padding_side=self.padding_side)
+                except Exception:
+                    collate_fn = default_data_collator
+
             return DataLoader(
                 self.train_dataset,
                 batch_size=self.batch_size,
                 shuffle=True,
                 num_workers=self.num_workers,
-                collate_fn=default_data_collator,
+                collate_fn=collate_fn,
                 pin_memory=True
             )
     
@@ -272,12 +337,21 @@ if HAS_LIGHTNING:
             if self.val_dataset is None:
                 return None
     
+            # Choose collator
+            collate_fn = default_data_collator
+            if self.use_dynamic_collator:
+                try:
+                    from .data_collator import LanguageModelingDataCollator
+                    collate_fn = LanguageModelingDataCollator(self.tokenizer, mlm=False, padding_side=self.padding_side)
+                except Exception:
+                    collate_fn = default_data_collator
+
             return DataLoader(
                 self.val_dataset,
                 batch_size=self.batch_size,
                 shuffle=False,
                 num_workers=self.num_workers,
-                collate_fn=default_data_collator,
+                collate_fn=collate_fn,
                 pin_memory=True
             )
 else:

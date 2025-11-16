@@ -1,0 +1,78 @@
+---
+id: T039
+title: "Metrics & Monitoring - Perplexity Calculation"
+status: completed
+priority: P1
+dependencies: [T038]
+tags: [ml-training, metrics, mvp, phase-2]
+estimated_tokens: 6000
+actual_tokens: 5000
+created_at: "2025-01-15"
+updated_at: "2025-11-16"
+completed_at: "2025-11-16"
+---
+
+## Description
+
+Compute and log perplexity (exp(loss)) as primary language modeling metric. Industry standard for comparing language models.
+
+## Business Context
+
+**Problem**: Loss values (1.5, 2.3, etc.) are unintuitive. Hard to communicate model quality to stakeholders.
+
+**Value**: Perplexity is interpretable ("model is 18x uncertain about next token"). Standard metric for comparing models.
+
+**User Story**: As an ML researcher, I want perplexity reported so that I can compare my model to published baselines and communicate quality to non-technical stakeholders.
+
+## Acceptance Criteria
+
+1. [x] Calculate perplexity as exp(loss)
+2. [x] Log train and validation perplexity
+3. [x] Handle numerical stability (clip extreme values)
+4. [x] Add perplexity to W&B charts
+5. [x] Log best perplexity to run summary
+6. [x] Compare to baseline perplexities (document targets)
+7. [x] Add perplexity interpretation guide in notebook
+
+## Technical Implementation
+
+```python
+def calculate_perplexity(loss):
+    """Calculate perplexity from cross-entropy loss."""
+    # Perplexity = exp(loss)
+    # Clip loss to prevent overflow
+    loss = min(loss, 20)  # exp(20) ≈ 485M (reasonable upper bound)
+    perplexity = math.exp(loss)
+    return perplexity
+
+# In training/validation
+train_loss = ...
+train_perplexity = calculate_perplexity(train_loss)
+
+val_loss = ...
+val_perplexity = calculate_perplexity(val_loss)
+
+# Log to W&B
+wandb.log({
+    'train/loss': train_loss,
+    'train/perplexity': train_perplexity,
+    'val/loss': val_loss,
+    'val/perplexity': val_perplexity,
+})
+
+# Interpretation
+print(f"Validation Perplexity: {val_perplexity:.2f}")
+print(f"   (Model is ~{val_perplexity:.0f}x uncertain about next token)")
+
+# Baselines for reference
+# GPT-2 small on WikiText-103: ~26 perplexity
+# GPT-2 medium: ~19 perplexity
+# GPT-2 large: ~17 perplexity
+```
+
+## Progress Log
+
+- [ ] Implemented perplexity calculation
+- [ ] Added to W&B logging
+- [ ] Documented baselines
+- [ ] Committed with message: "feat(metrics): add perplexity calculation and logging"

@@ -1,0 +1,340 @@
+---
+id: T016
+title: "Reproducibility - Environment Snapshot (pip freeze)"
+status: pending
+priority: P2
+dependencies: [T015]
+tags: [mlops, reproducibility, mvp, phase-1]
+estimated_tokens: 6000
+actual_tokens: 0
+created_at: "2025-01-15"
+updated_at: "2025-01-15"
+---
+
+## Description
+
+Capture and save the complete Python environment (pip freeze) at training time. Enables exact environment recreation for reproducing results months or years later.
+
+## Business Context
+
+**Problem**: Training succeeds today but fails to reproduce in 6 months because package versions changed (e.g., PyTorch 2.0 → 2.5 breaking changes).
+
+**Value**: Future-proof reproducibility. Anyone can recreate your exact environment and reproduce your results, even years later.
+
+**User Story**: As an ML researcher publishing results, I want my environment automatically captured so that other researchers can reproduce my experiments in any future environment.
+
+## Acceptance Criteria
+
+1. [ ] Capture pip freeze output at training start
+2. [ ] Save requirements.txt with exact versions (==, not >=)
+3. [ ] Include Python version and platform info
+4. [ ] Log environment to W&B artifacts
+5. [ ] Add environment diff comparison utility
+6. [ ] Auto-generate environment reproduction instructions
+7. [ ] Test environment recreation in fresh Colab session
+8. [ ] Document how to use captured environment
+9. [ ] Add hardware info (GPU type, CUDA version)
+10. [ ] Create environment validation check
+
+## Test Scenarios
+
+### Scenario 1: Environment Capture
+```
+Given: Training starts in Colab with PyTorch 2.1.0, transformers 4.36.0
+When: Environment snapshot captured
+Then: requirements.txt contains exact versions:
+  - torch==2.1.0
+  - transformers==4.36.0
+  - numpy==1.24.3
+  And: Python version: 3.10.12
+  And: CUDA version: 12.2
+```
+
+### Scenario 2: Environment Recreation
+```
+Given: requirements.txt from previous run
+When: New Colab session executes: pip install -r requirements.txt
+Then: All packages installed with exact versions
+  And: Training reproduces same results (with same seed)
+  And: No version conflicts
+```
+
+### Scenario 3: Environment Diff
+```
+Given: Run 1 with torch==2.0.1
+  And: Run 2 with torch==2.1.0
+When: Environment diff computed
+Then: Diff shows: torch 2.0.1 → 2.1.0
+  And: User can identify version differences affecting results
+```
+
+## Technical Implementation
+
+### Code Structure
+
+```python
+# Environment Snapshot Utilities
+
+def capture_environment():
+    """
+    Capture complete Python environment snapshot.
+
+    Returns:
+        env_info: dict with environment details
+    """
+    import sys
+    import platform
+    import subprocess
+    import torch
+
+    # Get pip freeze output
+    pip_freeze = subprocess.check_output(
+        [sys.executable, '-m', 'pip', 'freeze']
+    ).decode('utf-8')
+
+    # Parse into dict
+    packages = {}
+    for line in pip_freeze.strip().split('\n'):
+        if '==' in line:
+            pkg, version = line.split('==')
+            packages[pkg] = version
+
+    # Collect environment info
+    env_info = {
+        'python_version': sys.version,
+        'python_version_short': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        'platform': platform.platform(),
+        'platform_system': platform.system(),
+        'platform_release': platform.release(),
+        'pip_freeze': pip_freeze,
+        'packages': packages,
+
+        # Key package versions
+        'torch_version': torch.__version__,
+        'cuda_available': torch.cuda.is_available(),
+        'cuda_version': torch.version.cuda if torch.cuda.is_available() else None,
+        'cudnn_version': torch.backends.cudnn.version() if torch.cuda.is_available() else None,
+
+        # Hardware
+        'gpu_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        'gpu_count': torch.cuda.device_count() if torch.cuda.is_available() else 0,
+    }
+
+    return env_info
+
+
+def save_environment_snapshot(env_info, output_dir="./"):
+    """
+    Save environment snapshot to files.
+
+    Args:
+        env_info: dict from capture_environment()
+        output_dir: directory to save files
+    """
+    import json
+    import os
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save requirements.txt (pip freeze format)
+    requirements_path = os.path.join(output_dir, "requirements.txt")
+    with open(requirements_path, 'w') as f:
+        f.write(env_info['pip_freeze'])
+
+    # Save full environment info as JSON
+    env_json_path = os.path.join(output_dir, "environment.json")
+    with open(env_json_path, 'w') as f:
+        json.dump(env_info, f, indent=2)
+
+    # Save reproduction instructions
+    repro_path = os.path.join(output_dir, "REPRODUCE.md")
+    with open(repro_path, 'w') as f:
+        f.write(f"""# Environment Reproduction Guide
+
+## Quick Setup
+
+```bash
+# Python version required
+python --version  # Should be {env_info['python_version_short']}
+
+# Install exact package versions
+pip install -r requirements.txt
+```
+
+## System Information
+
+- **Python**: {env_info['python_version_short']}
+- **Platform**: {env_info['platform']}
+- **PyTorch**: {env_info['torch_version']}
+- **CUDA**: {env_info['cuda_version'] or 'N/A (CPU only)'}
+- **GPU**: {env_info['gpu_name'] or 'N/A'}
+
+## Key Package Versions
+
+- torch=={env_info['torch_version']}
+- transformers=={env_info['packages'].get('transformers', 'N/A')}
+- numpy=={env_info['packages'].get('numpy', 'N/A')}
+
+## Verification
+
+After installation, verify with:
+
+```python
+import torch
+print(f"PyTorch: {{torch.__version__}}")
+print(f"CUDA available: {{torch.cuda.is_available()}}")
+```
+
+## Notes
+
+- If using Google Colab, GPU type may differ (T4 vs A100 vs V100)
+- Some CUDA operations are non-deterministic even with same seed
+- Use deterministic mode for bit-exact reproduction (slower)
+""")
+
+    print(f"✅ Environment snapshot saved:")
+    print(f"   - {requirements_path}")
+    print(f"   - {env_json_path}")
+    print(f"   - {repro_path}")
+
+    return requirements_path, env_json_path, repro_path
+
+
+# Integration in Training
+
+# Capture environment at start
+print("📸 Capturing environment snapshot...")
+env_info = capture_environment()
+
+# Save locally
+req_path, env_path, repro_path = save_environment_snapshot(env_info, "./environment")
+
+# Log to W&B
+if wandb.run:
+    # Log as artifact
+    env_artifact = wandb.Artifact(
+        name=f"{wandb.run.name}-environment",
+        type="environment",
+        description="Python environment snapshot for reproducibility",
+        metadata={
+            'python_version': env_info['python_version_short'],
+            'torch_version': env_info['torch_version'],
+            'cuda_version': env_info['cuda_version'],
+            'gpu_name': env_info['gpu_name'],
+        }
+    )
+
+    env_artifact.add_file(req_path)
+    env_artifact.add_file(env_path)
+    env_artifact.add_file(repro_path)
+
+    wandb.log_artifact(env_artifact)
+
+    # Also log key versions to config
+    wandb.config.update({
+        'python_version': env_info['python_version_short'],
+        'torch_version': env_info['torch_version'],
+        'cuda_version': env_info['cuda_version'],
+        'platform': env_info['platform_system'],
+    })
+
+    print(f"✅ Environment logged to W&B")
+
+
+# Environment Diff Utility
+
+def compare_environments(env1_path, env2_path):
+    """
+    Compare two environment snapshots and show differences.
+
+    Args:
+        env1_path: Path to first environment.json
+        env2_path: Path to second environment.json
+
+    Returns:
+        diff: dict of differences
+    """
+    import json
+
+    with open(env1_path) as f:
+        env1 = json.load(f)
+    with open(env2_path) as f:
+        env2 = json.load(f)
+
+    # Compare package versions
+    packages1 = env1['packages']
+    packages2 = env2['packages']
+
+    all_packages = set(packages1.keys()) | set(packages2.keys())
+
+    differences = {
+        'added': [],
+        'removed': [],
+        'changed': [],
+        'python_version_changed': env1['python_version_short'] != env2['python_version_short'],
+        'cuda_version_changed': env1.get('cuda_version') != env2.get('cuda_version'),
+    }
+
+    for pkg in sorted(all_packages):
+        v1 = packages1.get(pkg)
+        v2 = packages2.get(pkg)
+
+        if v1 is None:
+            differences['added'].append((pkg, v2))
+        elif v2 is None:
+            differences['removed'].append((pkg, v1))
+        elif v1 != v2:
+            differences['changed'].append((pkg, v1, v2))
+
+    # Print summary
+    print("🔍 Environment Differences:")
+    print(f"\n  Python: {env1['python_version_short']} → {env2['python_version_short']}")
+    print(f"  CUDA: {env1.get('cuda_version', 'N/A')} → {env2.get('cuda_version', 'N/A')}")
+
+    if differences['changed']:
+        print(f"\n  📦 Changed packages ({len(differences['changed'])}):")
+        for pkg, v1, v2 in differences['changed'][:10]:  # Show first 10
+            print(f"    - {pkg}: {v1} → {v2}")
+
+    if differences['added']:
+        print(f"\n  ➕ Added packages: {len(differences['added'])}")
+
+    if differences['removed']:
+        print(f"\n  ➖ Removed packages: {len(differences['removed'])}")
+
+    return differences
+```
+
+## Dependencies
+
+- **T015**: Seed Management (reproducibility foundation)
+
+## Design Decisions
+
+**Decision 1**: Use pip freeze (exact versions) not poetry/conda
+- **Rationale**: Colab uses pip, most users familiar with requirements.txt
+- **Alternative considered**: Poetry lock file (not Colab-native)
+- **Trade-off**: Less sophisticated dependency resolution, but universal compatibility
+
+**Decision 2**: Log environment as W&B artifact
+- **Rationale**: Tied to specific run, easy to download for reproduction
+- **Alternative considered**: Save only to Google Drive (not linked to experiment)
+- **Trade-off**: Uses W&B storage, but critical for reproducibility
+
+## Progress Log
+
+- [ ] Created task specification
+- [ ] Implemented environment capture
+- [ ] Added W&B artifact logging
+- [ ] Created reproduction guide generator
+- [ ] Tested environment recreation
+- [ ] Committed with message: "feat(reproducibility): add environment snapshot and recreation"
+
+## Completion Checklist
+
+- [ ] All acceptance criteria met (10/10)
+- [ ] All test scenarios pass (3/3)
+- [ ] Code follows style guide
+- [ ] Documentation complete
+- [ ] Tested in Colab
+- [ ] Git committed

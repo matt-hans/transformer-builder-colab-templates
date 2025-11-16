@@ -51,7 +51,8 @@ class DatasetLoader:
                  preprocessing: bool = True,
                  min_length: int = 10,
                  max_length: Optional[int] = None,
-                 remove_duplicates: bool = False):
+                 remove_duplicates: bool = False,
+                 cache_dir: Optional[str] = None):
         """
         Initialize dataset loader.
 
@@ -65,6 +66,7 @@ class DatasetLoader:
         self.min_length = min_length
         self.max_length = max_length
         self.remove_duplicates = remove_duplicates
+        self.cache_dir = cache_dir
 
     def load_huggingface(self,
                         dataset_name: str,
@@ -102,7 +104,8 @@ class DatasetLoader:
                 config_name,
                 split=split,
                 streaming=streaming,
-                trust_remote_code=trust_remote_code
+                trust_remote_code=trust_remote_code,
+                cache_dir=self.cache_dir
             )
 
             if not streaming:

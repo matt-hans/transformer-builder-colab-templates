@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Model Export Utilities.
 
@@ -308,6 +309,144 @@ class ONNXExporter:
             'onnx_time': onnx_time,
             'speedup': pytorch_time / onnx_time if onnx_time > 0 else 0,
         }
+
+
+def export_state_dict(model: nn.Module,
+                      output_dir: Union[str, Path] = './exported_model',
+                      config: Optional[Any] = None,
+                      tokenizer: Optional[Any] = None,
+                      metrics: Optional[Dict[str, Any]] = None,
+                      upload_to_drive: bool = False,
+                      drive_subdir: str = 'MyDrive/exported-models') -> str:
+    """
+    Export trained model to standard PyTorch state_dict format with metadata.
+
+    Saves:
+    - pytorch_model.bin (state_dict)
+    - config.json (if provided and convertible)
+    - metadata.json (export info, metrics, env)
+    - tokenizer files (if tokenizer has save_pretrained)
+    - load_example.py (example loader script)
+
+    Args:
+        model: Trained model or Lightning adapter; if adapter, attempts to use adapter.model
+        output_dir: Directory to write export files
+        config: Model config (must have to_dict() or be JSON-serializable)
+        tokenizer: Optional tokenizer object supporting save_pretrained()
+        metrics: Optional final metrics dict to store in metadata
+        upload_to_drive: When True, attempts to copy export to Google Drive (Colab)
+        drive_subdir: Destination subdirectory under /content/drive
+
+    Returns:
+        str: Absolute path to export directory
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Unwrap adapter if needed
+    export_target = getattr(model, 'model', model)
+
+    # Save state dict
+    model_path = out / 'pytorch_model.bin'
+    torch.save(export_target.state_dict(), str(model_path))
+    print(f"✅ Model weights saved to {model_path}")
+
+    # Save config
+    config_path = out / 'config.json'
+    cfg_obj = None
+    if config is None:
+        cfg_obj = getattr(model, 'config', None)
+    else:
+        cfg_obj = config
+
+    if cfg_obj is not None:
+        try:
+            import json
+            if hasattr(cfg_obj, 'to_dict'):
+                cfg = cfg_obj.to_dict()
+            elif isinstance(cfg_obj, dict):
+                cfg = cfg_obj
+            else:
+                # Fallback: attempt to introspect simple attributes
+                cfg = {k: v for k, v in getattr(cfg_obj, '__dict__', {}).items() if isinstance(v, (int, float, str, bool, list, dict))}
+            with open(config_path, 'w') as f:
+                json.dump(cfg, f, indent=2)
+            print(f"✅ Config saved to {config_path}")
+        except Exception as e:
+            print(f"⚠️  Failed to save config: {e}")
+
+    # Save tokenizer
+    if tokenizer is None:
+        tokenizer = getattr(model, 'tokenizer', None)
+    if tokenizer is not None and hasattr(tokenizer, 'save_pretrained'):
+        try:
+            tokenizer.save_pretrained(str(out))
+            print(f"✅ Tokenizer saved to {out}")
+        except Exception as e:
+            print(f"⚠️  Failed to save tokenizer: {e}")
+
+    # Save metadata
+    metadata = {
+        'export_date': datetime.now().isoformat(),
+        'final_metrics': metrics or {},
+        'total_params': int(sum(p.numel() for p in export_target.parameters())),
+        'framework': 'PyTorch',
+        'pytorch_version': torch.__version__,
+        'files': ['pytorch_model.bin', 'config.json', 'metadata.json']
+    }
+    try:
+        import json
+        with open(out / 'metadata.json', 'w') as f:
+            json.dump(metadata, f, indent=2)
+    except Exception as e:
+        print(f"⚠️  Failed to write metadata: {e}")
+
+    # Create loading example
+    example = out / 'load_example.py'
+    example_text = (
+        '"""\n'
+        'Example code to load exported model.\n'
+        '"""\n'
+        'import torch\n'
+        'import json\n\n'
+        "with open('config.json', 'r') as f:\n"
+        '    config = json.load(f)\n\n'
+        '# TODO: Replace with your model class\n'
+        'class YourModelClass(torch.nn.Module):\n'
+        '    def __init__(self, config):\n'
+        '        super().__init__()\n'
+        '        # define layers based on config\n'
+        '        pass\n'
+        '    def forward(self, x):\n'
+        '        pass\n\n'
+        'model = YourModelClass(config)\n'
+        "state = torch.load('pytorch_model.bin', map_location='cpu')\n"
+        'model.load_state_dict(state, strict=False)\n'
+        'model.eval()\n\n'
+        "print('Model loaded. Ready for inference.')\n"
+    )
+    example.write_text(example_text)
+
+    # Optional: upload to Google Drive
+    if upload_to_drive:
+        try:
+            from google.colab import drive  # type: ignore
+            mount = Path('/content/drive')
+            if not mount.exists():
+                print("🔗 Mounting Google Drive...")
+                drive.mount(str(mount))
+            drive_dir = mount / drive_subdir
+            drive_dir.mkdir(parents=True, exist_ok=True)
+            import shutil
+            dest = drive_dir / out.name
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(out, dest)
+            print(f"☁️  Export copied to Drive: {dest}")
+        except Exception as e:
+            print(f"⚠️  Drive upload failed: {e}")
+
+    return str(out.resolve())
 
 
 class TorchScriptExporter:

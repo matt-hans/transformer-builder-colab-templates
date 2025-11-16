@@ -1,0 +1,577 @@
+{
+  "project": {
+    "name": "Transformer Builder - Training Pipeline MVP",
+    "description": "Production-ready training pipeline with experiment tracking, session resilience, real datasets, and professional ML practices",
+    "version": "3.5.0-mvp",
+    "language": "Python",
+    "framework": "PyTorch + Jupyter",
+    "target_environment": "Google Colab"
+  },
+  "mvp": {
+    "total_tasks": 17,
+    "description": "Essential tasks for a production-ready training pipeline",
+    "estimated_hours": "24-28 hours",
+    "phases": [
+      {
+        "name": "Experiment Tracking (MVP Core)",
+        "tasks": [
+          "T001",
+          "T002",
+          "T008"
+        ],
+        "hours": "6-8"
+      },
+      {
+        "name": "Reproducibility",
+        "tasks": [
+          "T015",
+          "T016",
+          "T017"
+        ],
+        "hours": "4-5"
+      },
+      {
+        "name": "Session Resilience",
+        "tasks": [
+          "T020",
+          "T021",
+          "T022"
+        ],
+        "hours": "6-7"
+      },
+      {
+        "name": "Real Datasets",
+        "tasks": [
+          "T029",
+          "T031"
+        ],
+        "hours": "3-4"
+      },
+      {
+        "name": "Training Improvements",
+        "tasks": [
+          "T033",
+          "T035",
+          "T037"
+        ],
+        "hours": "4-5"
+      },
+      {
+        "name": "Metrics & Export",
+        "tasks": [
+          "T038",
+          "T039",
+          "T043"
+        ],
+        "hours": "3-4"
+      }
+    ]
+  },
+  "tasks": [
+    {
+      "id": "T001",
+      "title": "W&B Basic Integration - Add wandb.init() and Config Logging",
+      "file": "tasks/T001-wandb-basic-integration.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [],
+      "blocks": [
+        "T002",
+        "T003",
+        "T004",
+        "T005",
+        "T006",
+        "T007"
+      ],
+      "tags": [
+        "mlops",
+        "experiment-tracking",
+        "wandb",
+        "mvp"
+      ],
+      "estimated_hours": 2.5,
+      "actual_hours": 5.0,
+      "estimated_tokens": 8000,
+      "actual_tokens": 20000,
+      "created_at": "2025-01-15",
+      "completed_at": "2025-11-16T01:47:24Z",
+      "completed_by": "task-completer",
+      "quality_score": 93.6
+    },
+    {
+      "id": "T002",
+      "title": "W&B Metrics Logging - Track Loss, Perplexity, Accuracy Per Epoch",
+      "file": "tasks/T002-wandb-metrics-logging.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [
+        "T001"
+      ],
+      "blocks": [
+        "T003",
+        "T004"
+      ],
+      "tags": [
+        "mlops",
+        "experiment-tracking",
+        "wandb",
+        "mvp"
+      ],
+      "estimated_hours": 3.5,
+      "actual_hours": 4.0,
+      "estimated_tokens": 10000,
+      "actual_tokens": 15000,
+      "created_at": "2025-01-15",
+      "started_at": "2025-11-15",
+      "completed_at": "2025-11-16T02:46:14Z",
+      "completed_by": "task-completer",
+      "quality_score": 91
+    },
+    {
+      "id": "T008",
+      "title": "HF Hub Basic Push - Upload Trained Models with Metadata",
+      "file": "tasks/T008-hf-hub-basic-push.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [],
+      "blocks": [
+        "T009",
+        "T010",
+        "T011"
+      ],
+      "tags": [
+        "mlops",
+        "model-registry",
+        "huggingface",
+        "mvp"
+      ],
+      "estimated_hours": 3,
+      "created_at": "2025-01-15",
+      "completed_at": "2025-11-16T05:16:57Z",
+      "actual_tokens": 7000
+    },
+    {
+      "id": "T015",
+      "title": "Reproducibility - Random Seed Management",
+      "file": "tasks/T015-reproducibility-seed-management.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [],
+      "blocks": [
+        "T016",
+        "T017"
+      ],
+      "tags": [
+        "mlops",
+        "reproducibility",
+        "mvp"
+      ],
+      "estimated_hours": 1.5,
+      "created_at": "2025-01-15",
+      "started_at": "2025-11-15",
+      "completed_at": "2025-11-16T03:33:59Z",
+      "completed_by": "task-completer",
+      "actual_tokens": 9000
+    },
+    {
+      "id": "T016",
+      "title": "Reproducibility - Environment Snapshot (pip freeze)",
+      "file": "tasks/T016-reproducibility-environment-snapshot.yaml",
+      "status": "pending",
+      "priority": "P2-MVP",
+      "phase": "mvp",
+      "depends_on": [
+        "T015"
+      ],
+      "blocks": [],
+      "tags": [
+        "mlops",
+        "reproducibility",
+        "mvp"
+      ],
+      "estimated_hours": 1.5,
+      "created_at": "2025-01-15"
+    },
+    {
+      "id": "T017",
+      "title": "Reproducibility - Training Configuration Versioning",
+      "file": "tasks/T017-reproducibility-config-versioning.yaml",
+      "status": "pending",
+      "priority": "P2-MVP",
+      "phase": "mvp",
+      "depends_on": [
+        "T015"
+      ],
+      "blocks": [],
+      "tags": [
+        "mlops",
+        "reproducibility",
+        "mvp"
+      ],
+      "estimated_hours": 2,
+      "created_at": "2025-01-15"
+    },
+    {
+      "id": "T020",
+      "title": "Checkpoint Management - Google Drive Integration",
+      "file": "tasks/T020-checkpoint-gdrive-integration.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [],
+      "blocks": [
+        "T021",
+        "T022",
+        "T023"
+      ],
+      "tags": [
+        "mlops",
+        "checkpoints",
+        "session-resilience",
+        "mvp"
+      ],
+      "estimated_hours": 4,
+      "created_at": "2025-01-15",
+      "completed_at": "2025-11-16T03:47:27Z",
+      "completed_by": "task-completer",
+      "actual_tokens": 11000
+    },
+    {
+      "id": "T021",
+      "title": "Checkpoint Management - Best Model Auto-Save",
+      "file": "tasks/T021-checkpoint-best-model.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [
+        "T020"
+      ],
+      "blocks": [],
+      "tags": [
+        "mlops",
+        "checkpoints",
+        "session-resilience",
+        "mvp"
+      ],
+      "estimated_hours": 2,
+      "created_at": "2025-01-15",
+      "completed_at": "2025-11-16T04:56:13Z",
+      "completed_by": "task-completer",
+      "actual_tokens": 5000
+    },
+    {
+      "id": "T022",
+      "title": "Checkpoint Management - Resume Training from Checkpoint",
+      "file": "tasks/T022-checkpoint-resume-training.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [
+        "T020"
+      ],
+      "blocks": [],
+      "tags": [
+        "mlops",
+        "checkpoints",
+        "session-resilience",
+        "mvp"
+      ],
+      "estimated_hours": 2.5,
+      "created_at": "2025-01-15",
+      "completed_at": "2025-11-16T05:01:57Z",
+      "completed_by": "task-completer",
+      "actual_tokens": 6000
+    },
+    {
+      "id": "T029",
+      "title": "Real Dataset Integration - HuggingFace Datasets Loader",
+      "file": "tasks/T029-dataset-hf-loader.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [],
+      "blocks": [
+        "T030",
+        "T031",
+        "T032"
+      ],
+      "tags": [
+        "ml-training",
+        "datasets",
+        "mvp"
+      ],
+      "estimated_hours": 2.5,
+      "created_at": "2025-01-15",
+      "completed_at": "2025-11-16T03:54:33Z",
+      "completed_by": "task-completer",
+      "actual_tokens": 9000
+    },
+    {
+      "id": "T031",
+      "title": "Real Dataset Integration - Data Collator for Variable-Length Sequences",
+      "file": "tasks/T031-dataset-data-collator.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [
+        "T029"
+      ],
+      "blocks": [],
+      "tags": [
+        "ml-training",
+        "datasets",
+        "mvp"
+      ],
+      "estimated_hours": 2,
+      "created_at": "2025-01-15",
+      "completed_at": "2025-11-16T05:10:04Z",
+      "completed_by": "task-completer",
+      "actual_tokens": 7000
+    },
+    {
+      "id": "T033",
+      "title": "Training Loop Improvements - Early Stopping Implementation",
+      "file": "tasks/T033-training-early-stopping.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [],
+      "blocks": [
+        "T034",
+        "T035"
+      ],
+      "tags": [
+        "ml-training",
+        "training-loop",
+        "mvp"
+      ],
+      "estimated_hours": 2,
+      "created_at": "2025-01-15",
+      "completed_at": "2025-11-16T04:29:12Z",
+      "completed_by": "task-completer",
+      "actual_tokens": 7000
+    },
+    {
+      "id": "T035",
+      "title": "Training Loop Improvements - Mixed Precision Training (AMP)",
+      "file": "tasks/T035-training-mixed-precision.yaml",
+      "status": "in_progress",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [
+        "T033"
+      ],
+      "blocks": [],
+      "tags": [
+        "ml-training",
+        "training-loop",
+        "performance",
+        "mvp"
+      ],
+      "estimated_hours": 2,
+      "created_at": "2025-01-15",
+      "started_at": "2025-11-16T05:20:53Z"
+    },
+    {
+      "id": "T037",
+      "title": "Training Loop Improvements - Gradient Accumulation Support",
+      "file": "tasks/T037-training-gradient-accumulation.yaml",
+      "status": "pending",
+      "priority": "P2-MVP",
+      "phase": "mvp",
+      "depends_on": [],
+      "blocks": [],
+      "tags": [
+        "ml-training",
+        "training-loop",
+        "memory",
+        "mvp"
+      ],
+      "estimated_hours": 1.5,
+      "created_at": "2025-01-15"
+    },
+    {
+      "id": "T038",
+      "title": "Metrics & Monitoring - Validation Split Implementation",
+      "file": "tasks/T038-metrics-validation-split.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [
+        "T029"
+      ],
+      "blocks": [
+        "T039",
+        "T040"
+      ],
+      "tags": [
+        "ml-training",
+        "metrics",
+        "mvp"
+      ],
+      "estimated_hours": 1.5,
+      "created_at": "2025-01-15",
+      "completed_at": "2025-11-16T04:33:52Z",
+      "completed_by": "task-completer",
+      "actual_tokens": 6000
+    },
+    {
+      "id": "T039",
+      "title": "Metrics & Monitoring - Perplexity Calculation",
+      "file": "tasks/T039-metrics-perplexity.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [
+        "T038"
+      ],
+      "blocks": [],
+      "tags": [
+        "ml-training",
+        "metrics",
+        "mvp"
+      ],
+      "estimated_hours": 1,
+      "created_at": "2025-01-15",
+      "completed_at": "2025-11-16T04:41:15Z",
+      "completed_by": "task-completer",
+      "actual_tokens": 5000
+    },
+    {
+      "id": "T043",
+      "title": "Model Export - PyTorch State Dict Export",
+      "file": "tasks/T043-export-pytorch.yaml",
+      "status": "completed",
+      "priority": "P1-MVP",
+      "phase": "mvp",
+      "depends_on": [],
+      "blocks": [
+        "T044",
+        "T045",
+        "T046"
+      ],
+      "tags": [
+        "ml-training",
+        "export",
+        "mvp"
+      ],
+      "estimated_hours": 1.5,
+      "created_at": "2025-01-15",
+      "completed_at": "2025-11-16T04:51:39Z",
+      "completed_by": "task-completer",
+      "actual_tokens": 6000
+    }
+  ],
+  "deferred_tasks": {
+    "description": "Tasks deferred to post-MVP (Phase 2 enhancements)",
+    "total": 30,
+    "categories": {
+      "wandb_advanced": {
+        "tasks": [
+          "T003",
+          "T004",
+          "T005",
+          "T006",
+          "T007"
+        ],
+        "description": "Advanced W&B features (dashboards, artifacts, sweeps, alerts)"
+      },
+      "hf_hub_advanced": {
+        "tasks": [
+          "T009",
+          "T010",
+          "T011",
+          "T012",
+          "T013",
+          "T014"
+        ],
+        "description": "Advanced HF Hub features (model cards, versioning, inference API)"
+      },
+      "reproducibility_advanced": {
+        "tasks": [
+          "T018",
+          "T019"
+        ],
+        "description": "Advanced reproducibility (deterministic mode, git tracking)"
+      },
+      "checkpoints_advanced": {
+        "tasks": [
+          "T023",
+          "T024"
+        ],
+        "description": "Advanced checkpointing (optimizer state, cleanup)"
+      },
+      "pipeline_orchestration": {
+        "tasks": [
+          "T025",
+          "T026",
+          "T027",
+          "T028"
+        ],
+        "description": "End-to-end pipeline orchestration"
+      },
+      "datasets_advanced": {
+        "tasks": [
+          "T030",
+          "T032"
+        ],
+        "description": "Custom text upload, tokenizer utilities"
+      },
+      "training_advanced": {
+        "tasks": [
+          "T034",
+          "T036"
+        ],
+        "description": "LR warmup, architecture-agnostic loss"
+      },
+      "metrics_advanced": {
+        "tasks": [
+          "T040",
+          "T041",
+          "T042"
+        ],
+        "description": "Advanced metrics (accuracy, visualization, task-specific)"
+      },
+      "export_advanced": {
+        "tasks": [
+          "T044",
+          "T045",
+          "T046"
+        ],
+        "description": "ONNX, TorchScript, metadata export"
+      },
+      "hyperparameter_optimization": {
+        "tasks": [
+          "T047"
+        ],
+        "description": "Expanded Optuna search space"
+      }
+    }
+  },
+  "critical_path_mvp": [
+    "T001",
+    "T002",
+    "T015",
+    "T020",
+    "T029",
+    "T033",
+    "T038"
+  ],
+  "stats": {
+    "mvp_tasks": 17,
+    "deferred_tasks": 30,
+    "total_planned": 47,
+    "mvp_estimated_hours": "24-28",
+    "deferred_estimated_hours": "32-36"
+  },
+  "metadata": {
+    "created_at": "2025-01-15",
+    "updated_at": "2025-01-15",
+    "manifest_version": "2.0-mvp",
+    "focus": "MVP training pipeline with essential production features"
+  }
+}

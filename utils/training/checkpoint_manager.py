@@ -18,12 +18,16 @@ import torch
 # Optional dependency - only needed for Tier 3
 try:
     import pytorch_lightning as pl
+    from pytorch_lightning.callbacks import ModelCheckpoint, Callback
     HAS_LIGHTNING = True
 except ImportError:
     pl = None
     HAS_LIGHTNING = False
-
-from pytorch_lightning.callbacks import ModelCheckpoint, Callback
+    class Callback:  # type: ignore
+        pass
+    class ModelCheckpoint:  # type: ignore
+        def __init__(self, *args, **kwargs):
+            raise ImportError("pytorch_lightning not installed")
 import json
 from datetime import datetime
 
@@ -148,14 +152,13 @@ class CheckpointManager:
             return None
 
         try:
-            # Check if in Colab
-            from google.colab import drive
+            from google.colab import drive  # noqa: F401
             return DriveBackupCallback(
                 checkpoint_dir=self.checkpoint_dir,
                 drive_path=self.drive_backup_path
             )
         except ImportError:
-            print("⚠️  Drive backup only available in Colab")
+            print("⚠️  Drive backup requested but not available (non-Colab environment)")
             return None
 
     def load_checkpoint(self,
@@ -413,6 +416,78 @@ class CheckpointManager:
                 print(f"    - {ckpt}")
 
 
+class BestStateDictCallback(Callback):
+    """
+    Save best model weights as state_dict (best.pt) when monitored metric improves.
+
+    Also logs best metric and epoch to W&B summary (if active) and prints a
+    visible indicator on improvement.
+    """
+
+    def __init__(self,
+                 checkpoint_dir: Path,
+                 metric_name: str = 'val_loss',
+                 mode: Literal['min', 'max'] = 'min'):
+        super().__init__()
+        self.checkpoint_dir = Path(checkpoint_dir)
+        self.metric_name = metric_name
+        self.mode = mode
+        self.best_value = float('inf') if mode == 'min' else float('-inf')
+        self.best_epoch = -1
+        self.best_path = self.checkpoint_dir / 'best.pt'
+
+    def on_validation_end(self, trainer, pl_module):  # type: ignore[override]
+        metrics = getattr(trainer, 'callback_metrics', {}) or {}
+        value = metrics.get(self.metric_name, None)
+        if value is None:
+            return
+        try:
+            curr = float(getattr(value, 'item', lambda: value)()) if hasattr(value, 'item') else float(value)
+        except Exception:
+            return
+
+        improved = (curr < self.best_value) if self.mode == 'min' else (curr > self.best_value)
+        if not improved:
+            return
+
+        self.best_value = curr
+        epoch = getattr(trainer, 'current_epoch', -1)
+        self.best_epoch = epoch
+
+        # Choose export target (unwrap adapter if present)
+        target = getattr(pl_module, 'model', pl_module)
+        config = getattr(pl_module, 'config', None)
+
+        # Save as best.pt with metadata
+        try:
+            save_checkpoint_with_progress(
+                model=target,
+                optimizer=None,
+                epoch=epoch,
+                metrics={self.metric_name: curr, 'is_best': True},
+                config=config,
+                checkpoint_dir=str(self.checkpoint_dir),
+                filename='best.pt'
+            )
+        except Exception as e:
+            print(f"⚠️  Failed to save best.pt: {e}")
+
+        # Log W&B summary
+        try:
+            import wandb  # type: ignore
+            if getattr(wandb, 'run', None):
+                wandb.run.summary[f'best_{self.metric_name}'] = curr
+                wandb.run.summary['best_epoch'] = epoch
+        except Exception:
+            pass
+
+        # Visual indicator
+        print("  " + "=" * 50)
+        print("  🎯 BEST MODEL UPDATED")
+        print(f"  🏆 {self.metric_name}={curr:.4f} (epoch {epoch})")
+        print("  " + "=" * 50)
+
+
 class DriveBackupCallback(Callback):
     """
     PyTorch Lightning callback for backing up checkpoints to Google Drive.
@@ -435,30 +510,35 @@ class DriveBackupCallback(Callback):
         super().__init__()
         self.checkpoint_dir = Path(checkpoint_dir)
         self.mount_point = Path(mount_point)
-
+        
         # Set default drive path
         if drive_path is None:
             drive_path = 'MyDrive/checkpoints'
         self.drive_path = self.mount_point / drive_path
 
         # Mount drive if needed
-        self._ensure_drive_mounted()
+        self.disabled = not self._ensure_drive_mounted()
 
-        # Create drive directory
-        self.drive_path.mkdir(parents=True, exist_ok=True)
+        # Create drive directory if enabled
+        if not self.disabled:
+            self.drive_path.mkdir(parents=True, exist_ok=True)
+            print(f"☁️  Drive backup enabled: {self.drive_path}")
+        else:
+            print("⚠️  Drive backup disabled (mount unavailable)")
 
-        print(f"☁️  Drive backup enabled: {self.drive_path}")
-
-    def _ensure_drive_mounted(self):
-        """Mount Google Drive if not already mounted."""
-        if not self.mount_point.exists():
-            try:
-                from google.colab import drive
-                print("🔗 Mounting Google Drive for backups...")
-                drive.mount(str(self.mount_point))
-                print("✓ Drive mounted")
-            except ImportError:
-                raise RuntimeError("Drive backup requires Google Colab environment")
+    def _ensure_drive_mounted(self) -> bool:
+        """Mount Google Drive if not already mounted. Returns True if mounted/enabled."""
+        if self.mount_point.exists():
+            return True
+        try:
+            from google.colab import drive  # noqa: F401
+            print("🔗 Mounting Google Drive for backups...")
+            drive.mount(str(self.mount_point))
+            print("✓ Drive mounted")
+            return True
+        except ImportError:
+            # Graceful fallback in non-Colab envs
+            return False
 
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
         """
@@ -466,6 +546,8 @@ class DriveBackupCallback(Callback):
 
         Copies checkpoint to Google Drive.
         """
+        if self.disabled:
+            return
         # Get the saved checkpoint path
         if trainer.checkpoint_callback:
             last_checkpoint = trainer.checkpoint_callback.last_model_path
@@ -486,18 +568,149 @@ class DriveBackupCallback(Callback):
 
         Syncs all checkpoints to Drive.
         """
+        if self.disabled:
+            return
         print("\n☁️  Final Drive sync...")
-
-        # Copy all checkpoints
-        for ckpt_file in self.checkpoint_dir.glob('*.ckpt'):
+        files = list(self.checkpoint_dir.glob('*.ckpt'))
+        try:
+            from tqdm import tqdm  # type: ignore
+        except Exception:
+            tqdm = None
+        iterator = tqdm(files, desc="Drive backup", unit="file") if tqdm else files
+        for ckpt_file in iterator:
             drive_checkpoint = self.drive_path / ckpt_file.name
-
             try:
                 if not drive_checkpoint.exists() or \
                    ckpt_file.stat().st_mtime > drive_checkpoint.stat().st_mtime:
                     shutil.copy2(ckpt_file, drive_checkpoint)
-                    print(f"  ✓ {ckpt_file.name}")
+                    if not tqdm:
+                        print(f"  ✓ {ckpt_file.name}")
             except Exception as e:
                 print(f"  ⚠️  Failed: {ckpt_file.name} ({e})")
-
         print(f"✓ All checkpoints backed up to {self.drive_path}")
+
+# Utility helpers for generic checkpoint save/load with progress
+def save_checkpoint_with_progress(model: 'torch.nn.Module',
+                                  optimizer: Optional['torch.optim.Optimizer'],
+                                  epoch: int,
+                                  metrics: Dict[str, Any],
+                                  config: Any,
+                                  checkpoint_dir: str,
+                                  filename: Optional[str] = None) -> str:
+    """
+    Save a generic checkpoint with progress bar and sidecar metadata JSON.
+    Compatible with non-Lightning workflows.
+    """
+    from datetime import datetime as _dt
+    from pathlib import Path as _Path
+    import json as _json
+    try:
+        from tqdm import tqdm as _tqdm
+    except Exception:
+        _tqdm = None
+
+    if filename is None:
+        filename = f"epoch_{epoch}.pt"
+    out_dir = _Path(checkpoint_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_path = out_dir / filename
+    meta_path = out_dir / f"epoch_{epoch}.json"
+
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
+        'metrics': metrics,
+        'config': config.to_dict() if hasattr(config, 'to_dict') else config,
+        'timestamp': _dt.now().isoformat(),
+    }
+    iterator = _tqdm(total=100, desc="Saving", unit="%") if _tqdm else None
+    torch.save(checkpoint, ckpt_path)
+    if iterator:
+        iterator.update(70)
+    _json.dump({
+        'epoch': epoch,
+        'timestamp': checkpoint['timestamp'],
+        'metrics': metrics,
+        'checkpoint_file': filename
+    }, open(meta_path, 'w'), indent=2)
+    if iterator:
+        iterator.update(30)
+        iterator.close()
+    return str(ckpt_path)
+
+
+def load_checkpoint_with_progress(checkpoint_path: str,
+                                  model: 'torch.nn.Module',
+                                  optimizer: Optional['torch.optim.Optimizer'] = None) -> Dict[str, Any]:
+    """
+    Load a generic checkpoint with progress bar and restore model/optimizer.
+    """
+    try:
+        from tqdm import tqdm as _tqdm
+    except Exception:
+        _tqdm = None
+    iterator = _tqdm(total=100, desc="Loading", unit="%") if _tqdm else None
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    if iterator:
+        iterator.update(50)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    if iterator:
+        iterator.update(30)
+    if optimizer is not None and checkpoint.get('optimizer_state_dict') is not None:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if iterator:
+        iterator.update(20)
+        iterator.close()
+    return checkpoint
+
+
+def find_latest_checkpoint_in_dir(path: str) -> Optional[str]:
+    """Find the latest epoch_*.pt checkpoint in a directory (highest epoch)."""
+    p = Path(path)
+    if not p.exists():
+        return None
+    cks = list(p.glob('epoch_*.pt'))
+    if not cks:
+        return None
+    def _ep(fp):
+        try:
+            return int(fp.stem.split('_')[1])
+        except Exception:
+            return -1
+    cks.sort(key=_ep)
+    return str(cks[-1])
+
+
+def detect_resume_checkpoint(checkpoint_dir: str,
+                             prefer: Literal['best', 'last'] = 'best') -> Dict[str, Optional[str]]:
+    """
+    Detect an appropriate resume checkpoint.
+
+    Prefers Lightning .ckpt files (best.ckpt → last.ckpt → newest *.ckpt),
+    falling back to state_dict files (best.pt → latest epoch_*.pt).
+
+    Returns a dict: { 'type': 'lightning'|'state_dict'|None, 'path': str|None }
+    """
+    d = Path(checkpoint_dir)
+    # Lightning checkpoints
+    best_ckpt = d / 'best.ckpt'
+    last_ckpt = d / 'last.ckpt'
+    if prefer == 'best' and best_ckpt.exists():
+        return {'type': 'lightning', 'path': str(best_ckpt)}
+    if last_ckpt.exists():
+        return {'type': 'lightning', 'path': str(last_ckpt)}
+    if prefer == 'last' and best_ckpt.exists():
+        return {'type': 'lightning', 'path': str(best_ckpt)}
+    # Any other .ckpt
+    ckpts = sorted(d.glob('*.ckpt'), key=lambda p: p.stat().st_mtime, reverse=True)
+    if ckpts:
+        return {'type': 'lightning', 'path': str(ckpts[0])}
+    # State dict fallbacks
+    best_pt = d / 'best.pt'
+    if best_pt.exists():
+        return {'type': 'state_dict', 'path': str(best_pt)}
+    pts = sorted(d.glob('epoch_*.pt'), key=lambda p: p.stat().st_mtime, reverse=True)
+    if pts:
+        return {'type': 'state_dict', 'path': str(pts[0])}
+    return {'type': None, 'path': None}

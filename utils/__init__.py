@@ -58,6 +58,22 @@ except ImportError:
 from .ui.setup_wizard import SetupWizard
 from .ui.presets import ConfigPresets, PRESETS
 
+# Helper modules (T001 - W&B Integration)
+from .model_helpers import (
+    find_model_class,
+    instantiate_model,
+    create_model_config,
+    count_parameters,
+    get_model_device,
+    setup_model_from_gist
+)
+from .wandb_helpers import (
+    detect_model_type,
+    build_wandb_config,
+    initialize_wandb_run,
+    print_wandb_summary
+)
+
 # Test functions (backward compatibility - already available)
 from .test_functions import *
 
@@ -93,6 +109,18 @@ __all__ = [
     'SetupWizard',
     'ConfigPresets',
     'PRESETS',
+
+    # Helper modules (T001)
+    'find_model_class',
+    'instantiate_model',
+    'create_model_config',
+    'count_parameters',
+    'get_model_device',
+    'setup_model_from_gist',
+    'detect_model_type',
+    'build_wandb_config',
+    'initialize_wandb_run',
+    'print_wandb_summary',
 
     # Test functions (available now - re-exported from test_functions.py)
     'test_shape_robustness',

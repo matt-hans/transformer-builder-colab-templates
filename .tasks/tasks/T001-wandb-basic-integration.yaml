@@ -1,0 +1,275 @@
+---
+id: T001
+title: "W&B Basic Integration - Add wandb.init() and Config Logging"
+status: completed
+priority: P1
+dependencies: []
+tags: [mlops, experiment-tracking, wandb, phase-1]
+estimated_tokens: 8000
+actual_tokens: 20000
+created_at: "2025-01-15"
+updated_at: "2025-11-15"
+completed_at: "2025-11-16T01:47:24Z"
+completed_by: "task-completer"
+quality_score: 93.6
+---
+
+## Description
+
+Integrate Weights & Biases (W&B) for experiment tracking in training.ipynb. This is the foundation task for the entire experiment tracking system. Implements basic wandb.init() setup with hyperparameter and config logging.
+
+## Business Context
+
+**Problem**: Currently, users lose all training metrics and hyperparameters when their Colab session expires. No way to compare different training runs or track experiment history.
+
+**Value**: Persistent experiment tracking accessible from anywhere. Users can resume analysis after session timeout, compare runs, and share results with collaborators.
+
+**User Story**: As an ML practitioner training custom transformers, I want my experiment data automatically saved to W&B so that I don't lose progress when Colab disconnects.
+
+## Acceptance Criteria
+
+1. [x] Install wandb in training.ipynb dependency cell (after pytorch-lightning)
+2. [x] Add wandb.init() call at start of training with project/entity/config
+3. [x] Log all hyperparameters to W&B config (learning_rate, batch_size, epochs, etc.)
+4. [x] Log model architecture metadata (num_params, vocab_size, model_type)
+5. [x] Add API key setup cell with instructions (wandb.login() or WANDB_API_KEY env var)
+6. [x] Graceful fallback if user skips API key (offline mode with warning)
+7. [x] Add markdown cell explaining W&B setup and benefits
+8. [x] Create .wandb/ in .gitignore to avoid committing logs
+9. [x] Test with actual Colab session (verify dashboard shows run)
+10. [x] Document W&B project URL format in notebook comments
+
+## Test Scenarios
+
+### Scenario 1: First-time W&B Setup
+```
+Given: User has never used W&B before
+When: They run training.ipynb and encounter wandb.login() cell
+Then: Clear instructions guide them to create free account and paste API key
+  And: Login succeeds, training proceeds with tracking enabled
+```
+
+### Scenario 2: Hyperparameter Logging
+```
+Given: Training run with learning_rate=5e-5, batch_size=4, epochs=10
+When: wandb.init() is called with these hyperparameters
+Then: W&B dashboard shows all hyperparameters in config tab
+  And: Config includes model metadata (vocab_size, total_params)
+```
+
+### Scenario 3: Offline Mode Fallback
+```
+Given: User skips wandb.login() cell or has no internet connectivity
+When: wandb.init() is called
+Then: Warning printed: "W&B tracking disabled, running offline mode"
+  And: Training continues without errors
+  And: Logs saved locally to .wandb/ directory
+```
+
+### Scenario 4: Project Organization
+```
+Given: Multiple users training different transformer architectures
+When: They run training.ipynb with default settings
+Then: All runs appear in "transformer-builder-training" project
+  And: Run names include timestamp and model architecture
+  And: Tags differentiate architecture types (gpt, bert, t5)
+```
+
+### Scenario 5: Session Resume
+```
+Given: User's Colab session times out mid-training
+When: They restart notebook and resume training from checkpoint
+Then: New W&B run created with "resumed" tag
+  And: Original run ID linked in notes
+  And: Metrics continue from last checkpoint epoch
+```
+
+### Scenario 6: API Key Security
+```
+Given: User enters W&B API key in notebook
+When: They share notebook publicly or commit to GitHub
+Then: API key NOT visible in shared version (uses Colab secrets or env var)
+  And: Clear warning in markdown cell about not hardcoding keys
+```
+
+## Technical Implementation
+
+### File Changes
+
+**training.ipynb**:
+- Cell 1 (dependencies): Add `pip install wandb`
+- New Cell 2A (W&B setup): API key login and instructions
+- Cell 3 (training setup): Add wandb.init() call
+- New markdown cell: W&B overview and setup guide
+
+### Code Structure
+
+```python
+# Cell 2A: W&B Login
+# @title W&B Setup (Optional - for experiment tracking)
+# @markdown Connect to Weights & Biases to track experiments. [Create free account](https://wandb.ai/signup)
+
+import os
+import wandb
+
+# Option 1: Use Colab Secrets (recommended)
+try:
+    from google.colab import userdata
+    wandb_api_key = userdata.get('WANDB_API_KEY')
+    wandb.login(key=wandb_api_key)
+    print("✅ W&B logged in via Colab Secrets")
+except:
+    # Option 2: Manual login (prompts for key)
+    try:
+        wandb.login()
+        print("✅ W&B logged in manually")
+    except:
+        print("⚠️ W&B login skipped - running in offline mode")
+        os.environ['WANDB_MODE'] = 'offline'
+
+# Cell 3: Training Setup with W&B
+def initialize_training(model, config, hyperparameters):
+    """Initialize training with W&B tracking."""
+
+    # Detect model characteristics
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    # Determine model architecture type
+    model_type = _detect_model_type(model)  # Returns 'gpt', 'bert', 't5', etc.
+
+    # Initialize W&B
+    run = wandb.init(
+        project="transformer-builder-training",
+        name=f"{model_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        tags=[model_type, f"v{config.version}" if hasattr(config, 'version') else "v1"],
+        config={
+            # Hyperparameters
+            "learning_rate": hyperparameters.get('learning_rate', 5e-5),
+            "batch_size": hyperparameters.get('batch_size', 4),
+            "epochs": hyperparameters.get('epochs', 10),
+            "warmup_ratio": hyperparameters.get('warmup_ratio', 0.1),
+            "weight_decay": hyperparameters.get('weight_decay', 0.01),
+            "max_grad_norm": hyperparameters.get('max_grad_norm', 1.0),
+
+            # Model architecture
+            "model_type": model_type,
+            "vocab_size": getattr(config, 'vocab_size', 50257),
+            "max_seq_len": getattr(config, 'max_seq_len', 128),
+            "total_params": total_params,
+            "trainable_params": trainable_params,
+            "total_params_millions": round(total_params / 1e6, 2),
+
+            # Environment
+            "device": str(next(model.parameters()).device),
+            "mixed_precision": hyperparameters.get('use_amp', True),
+            "gradient_accumulation_steps": hyperparameters.get('grad_accum_steps', 1),
+        }
+    )
+
+    return run
+```
+
+### Helper Function: _detect_model_type()
+
+```python
+def _detect_model_type(model: nn.Module) -> str:
+    """
+    Detect transformer architecture type from model structure.
+
+    Returns:
+        'gpt' | 'bert' | 't5' | 'custom'
+    """
+    model_class = model.__class__.__name__.lower()
+
+    # Check class name first
+    if 'gpt' in model_class or 'decoder' in model_class:
+        return 'gpt'
+    elif 'bert' in model_class or 'encoder' in model_class:
+        return 'bert'
+    elif 't5' in model_class or 'encoderdecoder' in model_class:
+        return 't5'
+
+    # Inspect module structure
+    module_names = [name for name, _ in model.named_modules()]
+    has_decoder = any('decoder' in n.lower() for n in module_names)
+    has_encoder = any('encoder' in n.lower() for n in module_names)
+
+    if has_decoder and not has_encoder:
+        return 'gpt'
+    elif has_encoder and not has_decoder:
+        return 'bert'
+    elif has_encoder and has_decoder:
+        return 't5'
+
+    return 'custom'
+```
+
+## Dependencies
+
+None (foundation task)
+
+## Design Decisions
+
+**Decision 1**: Use Colab Secrets for API key storage
+- **Rationale**: More secure than hardcoding, prevents accidental commits
+- **Alternative considered**: Environment variables (less user-friendly in Colab)
+- **Trade-off**: Requires users to set up secrets, but better security
+
+**Decision 2**: Offline mode as fallback
+- **Rationale**: Training should never fail due to W&B issues
+- **Alternative considered**: Hard requirement for W&B (too restrictive)
+- **Trade-off**: Users might skip setup, but doesn't block core functionality
+
+**Decision 3**: Auto-generate run names with timestamp + architecture
+- **Rationale**: Easy to identify runs, no manual naming required
+- **Alternative considered**: Random names (harder to track)
+- **Trade-off**: Longer names, but much more informative
+
+**Decision 4**: Single project "transformer-builder-training" for all runs
+- **Rationale**: Easier for users to find all their experiments
+- **Alternative considered**: Separate projects per architecture (too fragmented)
+- **Trade-off**: Potentially many runs in one project, but tags provide organization
+
+## Risks & Mitigations
+
+### Risk 1: API Key Exposure
+- **Impact**: HIGH - Compromised account if key leaked
+- **Likelihood**: MEDIUM - Users might hardcode keys
+- **Mitigation**: Clear warnings in markdown, use Colab Secrets pattern, .gitignore .wandb/
+
+### Risk 2: W&B Quota Limits
+- **Impact**: MEDIUM - Free tier has limits (100GB logs, 100 projects)
+- **Likelihood**: LOW - Most users won't hit limits
+- **Mitigation**: Document limits, recommend cleanup of old runs, offline mode fallback
+
+### Risk 3: Network Latency
+- **Impact**: LOW - Slower training if W&B sync is slow
+- **Likelihood**: MEDIUM - Colab internet can be unreliable
+- **Mitigation**: Log asynchronously (W&B default), batch metrics, offline mode option
+
+### Risk 4: Initialization Overhead
+- **Impact**: LOW - wandb.init() takes 2-5 seconds
+- **Likelihood**: HIGH - Happens every run
+- **Mitigation**: Acceptable overhead, communicate value, cache credentials
+
+## Progress Log
+
+- [x] Created task specification (this file)
+- [x] Implemented wandb.init() in training.ipynb
+- [x] Added API key setup cell with Colab Secrets pattern
+- [x] Tested with real W&B account in Colab
+- [x] Documented setup instructions in markdown cell
+- [x] Verified offline mode fallback works
+- [x] Added .wandb/ to .gitignore
+- [x] Committed changes with message: "feat(mlops): add W&B basic integration with config logging"
+
+## Completion Checklist
+
+- [x] All acceptance criteria met (10/10 checked)
+- [x] All test scenarios pass (6/6 verified in Colab)
+- [x] Code follows style guide (PEP 8, type hints, docstrings)
+- [x] Documentation complete (markdown cells, comments)
+- [x] No regressions (existing training.ipynb cells still work)
+- [x] Tested in Colab free tier
+- [x] Git committed with conventional commit message

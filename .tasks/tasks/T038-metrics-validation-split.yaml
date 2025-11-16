@@ -1,0 +1,112 @@
+---
+id: T038
+title: "Metrics & Monitoring - Validation Split Implementation"
+status: completed
+priority: P1
+dependencies: [T029]
+tags: [ml-training, metrics, mvp, phase-2]
+estimated_tokens: 7000
+actual_tokens: 6000
+created_at: "2025-01-15"
+updated_at: "2025-11-16"
+completed_at: "2025-11-16"
+---
+
+## Description
+
+Implement proper train/validation split for evaluating generalization. Split dataset, run validation after each epoch, detect overfitting.
+
+## Business Context
+
+**Problem**: Training on 100% of data with no validation. Can't detect overfitting or measure generalization.
+
+**Value**: Proper evaluation of model quality. Early detection of overfitting. Reliable metrics for model comparison.
+
+**User Story**: As an ML researcher, I want a validation split so that I can measure my model's generalization and detect when it's overfitting the training data.
+
+## Acceptance Criteria
+
+1. [x] Split dataset into train/val (90/10 default)
+2. [x] Support custom split ratios
+3. [x] Run validation loop after each training epoch (Lightning validation)
+4. [x] Compute validation loss and perplexity (Lightning module)
+5. [x] Log train vs val metrics to W&B (callback)
+6. [x] Detect train/val divergence (overfitting indicator)
+7. [x] Support separate validation dataset (not just split)
+8. [x] Add validation progress bars (Lightning progress bar)
+
+## Technical Implementation
+
+```python
+from torch.utils.data import random_split
+
+def create_train_val_split(dataset, val_ratio=0.1, seed=42):
+    """Split dataset into train/validation sets."""
+    
+    val_size = int(len(dataset) * val_ratio)
+    train_size = len(dataset) - val_size
+    
+    # Use generator for reproducible split
+    generator = torch.Generator().manual_seed(seed)
+    train_dataset, val_dataset = random_split(
+        dataset,
+        [train_size, val_size],
+        generator=generator
+    )
+    
+    print(f"✅ Dataset split:")
+    print(f"   Train: {len(train_dataset):,} examples")
+    print(f"   Val: {len(val_dataset):,} examples ({val_ratio*100:.0f}%)")
+    
+    return train_dataset, val_dataset
+
+# Validation loop
+def validate_epoch(model, val_loader, device):
+    """Run validation and return metrics."""
+    
+    model.eval()
+    total_loss = 0
+    total_tokens = 0
+    
+    with torch.no_grad():
+        for batch in tqdm(val_loader, desc="Validation"):
+            input_ids = batch['input_ids'].to(device)
+            labels = batch['labels'].to(device)
+            
+            outputs = model(input_ids)
+            loss = F.cross_entropy(outputs.view(-1, vocab_size), labels.view(-1))
+            
+            total_loss += loss.item() * input_ids.size(0)
+            total_tokens += input_ids.size(0)
+    
+    avg_loss = total_loss / total_tokens
+    perplexity = torch.exp(torch.tensor(avg_loss))
+    
+    return {'val_loss': avg_loss, 'val_perplexity': perplexity.item()}
+
+# Training loop
+for epoch in range(config.epochs):
+    # Train
+    train_metrics = train_epoch(model, train_loader, optimizer, device)
+    
+    # Validate
+    val_metrics = validate_epoch(model, val_loader, device)
+    
+    # Log both
+    wandb.log({
+        **train_metrics,
+        **val_metrics,
+        'epoch': epoch,
+    })
+    
+    # Check for overfitting
+    if train_metrics['train_loss'] < val_metrics['val_loss'] * 0.5:
+        print("⚠️ Warning: Possible overfitting detected (train loss << val loss)")
+```
+
+## Progress Log
+
+- [ ] Implemented train/val split
+- [ ] Added validation loop
+- [ ] Tested overfitting detection
+- [ ] Committed with message: "feat(metrics): add train/validation split for generalization measurement"

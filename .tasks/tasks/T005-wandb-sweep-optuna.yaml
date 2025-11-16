@@ -1,0 +1,359 @@
+---
+id: T005
+title: "W&B Hyperparameter Sweep Integration with Optuna"
+status: pending
+priority: P3
+dependencies: [T001]
+tags: [mlops, experiment-tracking, wandb, hyperparameter-tuning, phase-1]
+estimated_tokens: 10000
+actual_tokens: 0
+created_at: "2025-01-15"
+updated_at: "2025-01-15"
+---
+
+## Description
+
+Integrate W&B Sweeps with existing Optuna hyperparameter search. Enable centralized sweep management, visualization, and comparison of hyperparameter configurations across runs.
+
+## Business Context
+
+**Problem**: Training.ipynb already has Optuna for hyperparameter search, but results aren't tracked centrally. Hard to compare different sweep configurations or resume interrupted sweeps.
+
+**Value**: Unified hyperparameter search tracking. Users can compare Optuna trials visually, identify best hyperparameter regions, and share sweep results with collaborators.
+
+**User Story**: As an ML researcher, I want my Optuna hyperparameter searches tracked in W&B so that I can visualize search progress, compare trial results, and reproduce the best configuration.
+
+## Acceptance Criteria
+
+1. [ ] Integrate W&B logging into Optuna objective function
+2. [ ] Create W&B sweep configuration (YAML) for common transformer hyperparameters
+3. [ ] Log each Optuna trial as separate W&B run with sweep grouping
+4. [ ] Add parallel coordinates plot for hyperparameter visualization
+5. [ ] Log Optuna study best_trial and best_params to W&B
+6. [ ] Enable sweep resume from checkpoint (if study interrupted)
+7. [ ] Add markdown cell explaining sweep setup and interpretation
+8. [ ] Test sweep with at least 20 trials
+9. [ ] Document how to launch sweep from W&B UI vs notebook
+10. [ ] Compare W&B Sweeps vs Optuna backends (document pros/cons)
+
+## Test Scenarios
+
+### Scenario 1: Basic Optuna + W&B Integration
+```
+Given: Optuna study searching learning_rate, batch_size, warmup_ratio
+When: Study runs 20 trials
+Then: W&B shows 20 runs grouped under same sweep
+  And: Each run shows hyperparameters in config
+  And: Parallel coordinates plot displays all trials
+```
+
+### Scenario 2: Sweep Best Trial Identification
+```
+Given: Sweep completed with 50 trials, best val_loss=1.234 at trial 37
+When: Study completes
+Then: W&B dashboard highlights trial 37 as "best"
+  And: Best hyperparameters shown in sweep overview
+  And: User can click to view best run details
+```
+
+### Scenario 3: Sweep Resume After Interrupt
+```
+Given: Optuna study interrupted after 15 of 50 trials
+When: Notebook restarted and study resumed
+Then: Optuna loads previous study from storage
+  And: W&B shows all trials (old + new) in same sweep
+  And: Trial numbering continues from 16
+```
+
+### Scenario 4: Hyperparameter Importance Analysis
+```
+Given: Completed sweep with 100 trials varying 5 hyperparameters
+When: Optuna importance analysis run
+Then: W&B displays parameter importance chart
+  And: Learning_rate identified as most important (example)
+  And: Less important parameters flagged for fixing
+```
+
+## Technical Implementation
+
+### File Changes
+
+**training.ipynb**:
+- Modify Optuna objective function to log to W&B
+- Add sweep configuration cell
+- Add sweep results analysis cell
+
+**New file**: `.tasks/sweeps/transformer-sweep.yaml` (W&B sweep config template)
+
+### Code Structure
+
+```python
+# Optuna Objective Function with W&B Integration
+
+def create_optuna_objective_with_wandb(model_class, config, train_dataset, val_dataset):
+    """
+    Create Optuna objective function that logs to W&B.
+
+    Args:
+        model_class: Class for instantiating model
+        config: Base model configuration
+        train_dataset: Training dataset
+        val_dataset: Validation dataset
+
+    Returns:
+        objective: Function for Optuna to optimize
+    """
+
+    def objective(trial):
+        # Sample hyperparameters
+        lr = trial.suggest_float('learning_rate', 1e-5, 1e-3, log=True)
+        batch_size = trial.suggest_categorical('batch_size', [4, 8, 16])
+        warmup_ratio = trial.suggest_float('warmup_ratio', 0.0, 0.3)
+        weight_decay = trial.suggest_float('weight_decay', 0.0, 0.1)
+        num_epochs = trial.suggest_int('num_epochs', 3, 10)
+
+        # Initialize W&B for this trial
+        run = wandb.init(
+            project="transformer-builder-training",
+            name=f"trial_{trial.number}",
+            group="optuna-sweep",  # Group all trials together
+            tags=["optuna", "hyperparameter-search"],
+            config={
+                'learning_rate': lr,
+                'batch_size': batch_size,
+                'warmup_ratio': warmup_ratio,
+                'weight_decay': weight_decay,
+                'num_epochs': num_epochs,
+                'trial_number': trial.number,
+            },
+            reinit=True,  # Allow multiple wandb.init() in same process
+        )
+
+        try:
+            # Train model with these hyperparameters
+            model = model_class(config).to('cuda' if torch.cuda.is_available() else 'cpu')
+
+            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+            val_loader = DataLoader(val_dataset, batch_size=batch_size)
+
+            optimizer = torch.optim.AdamW(
+                model.parameters(),
+                lr=lr,
+                weight_decay=weight_decay
+            )
+
+            # Training loop (simplified)
+            best_val_loss = float('inf')
+            for epoch in range(num_epochs):
+                # Train
+                model.train()
+                train_loss = 0.0
+                for batch in train_loader:
+                    input_ids = batch['input_ids'].to(model.device)
+                    labels = batch['labels'].to(model.device)
+
+                    optimizer.zero_grad()
+                    outputs = model(input_ids)
+                    loss = F.cross_entropy(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+                    loss.backward()
+                    optimizer.step()
+
+                    train_loss += loss.item()
+
+                train_loss /= len(train_loader)
+
+                # Validate
+                model.eval()
+                val_loss = 0.0
+                with torch.no_grad():
+                    for batch in val_loader:
+                        input_ids = batch['input_ids'].to(model.device)
+                        labels = batch['labels'].to(model.device)
+
+                        outputs = model(input_ids)
+                        loss = F.cross_entropy(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+                        val_loss += loss.item()
+
+                val_loss /= len(val_loader)
+                best_val_loss = min(best_val_loss, val_loss)
+
+                # Log to W&B
+                wandb.log({
+                    'epoch': epoch,
+                    'train/loss': train_loss,
+                    'val/loss': val_loss,
+                    'best_val_loss': best_val_loss,
+                })
+
+                # Report intermediate value to Optuna (for pruning)
+                trial.report(val_loss, epoch)
+
+                # Handle pruning
+                if trial.should_prune():
+                    wandb.run.summary['pruned'] = True
+                    raise optuna.TrialPruned()
+
+            # Log final metrics
+            wandb.run.summary['best_val_loss'] = best_val_loss
+            wandb.run.summary['final_val_loss'] = val_loss
+
+        finally:
+            wandb.finish()
+
+        return best_val_loss  # Optuna minimizes this
+
+    return objective
+
+
+# Run Optuna Study with W&B Integration
+
+import optuna
+from optuna.pruners import MedianPruner
+
+# Create Optuna study with persistence
+study = optuna.create_study(
+    study_name="transformer-hyperparam-search",
+    storage="sqlite:///optuna_study.db",  # Persist to database for resume
+    load_if_exists=True,  # Resume if interrupted
+    direction="minimize",
+    pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=3),
+)
+
+# Create objective with W&B logging
+objective = create_optuna_objective_with_wandb(
+    model_class=TransformerModel,
+    config=base_config,
+    train_dataset=train_dataset,
+    val_dataset=val_dataset,
+)
+
+# Run optimization
+print("🔍 Starting hyperparameter search with Optuna + W&B...")
+study.optimize(objective, n_trials=50, n_jobs=1)  # n_jobs=1 for Colab
+
+# Log study results to W&B
+print("\n✅ Hyperparameter search complete!")
+print(f"   Best trial: {study.best_trial.number}")
+print(f"   Best val_loss: {study.best_value:.4f}")
+print(f"   Best params: {study.best_params}")
+
+# Create final summary run
+summary_run = wandb.init(
+    project="transformer-builder-training",
+    name="optuna-sweep-summary",
+    job_type="sweep-summary",
+    tags=["optuna", "summary"],
+)
+
+# Log best trial details
+summary_run.config.update(study.best_params)
+summary_run.summary['best_val_loss'] = study.best_value
+summary_run.summary['num_trials'] = len(study.trials)
+summary_run.summary['best_trial_number'] = study.best_trial.number
+
+# Log parameter importance
+try:
+    importance = optuna.importance.get_param_importances(study)
+    for param, imp in importance.items():
+        summary_run.summary[f'importance/{param}'] = imp
+    print(f"\n📊 Parameter importance: {importance}")
+except:
+    print("⚠️ Not enough trials for importance analysis (need 10+)")
+
+wandb.finish()
+```
+
+### W&B Sweep Configuration (Alternative to Optuna)
+
+```yaml
+# .tasks/sweeps/transformer-sweep.yaml
+
+program: train.py
+method: bayes
+metric:
+  name: val/loss
+  goal: minimize
+parameters:
+  learning_rate:
+    min: 0.00001
+    max: 0.001
+    distribution: log_uniform
+  batch_size:
+    values: [4, 8, 16]
+  warmup_ratio:
+    min: 0.0
+    max: 0.3
+  weight_decay:
+    min: 0.0
+    max: 0.1
+  num_epochs:
+    values: [3, 5, 7, 10]
+```
+
+Usage:
+```bash
+# Initialize sweep from command line (if using .py instead of notebook)
+wandb sweep .tasks/sweeps/transformer-sweep.yaml
+
+# Or from notebook
+import wandb
+sweep_id = wandb.sweep(sweep_config, project="transformer-builder-training")
+wandb.agent(sweep_id, function=train_function, count=50)
+```
+
+## Dependencies
+
+- **T001**: W&B Basic Integration (requires wandb.init() setup)
+
+## Design Decisions
+
+**Decision 1**: Keep Optuna as primary search backend, add W&B logging
+- **Rationale**: Optuna already integrated, has better pruning and advanced samplers
+- **Alternative considered**: Replace Optuna with W&B Sweeps (breaking change)
+- **Trade-off**: Two systems instead of one, but preserves existing functionality
+
+**Decision 2**: Use `reinit=True` for multiple wandb.init() calls
+- **Rationale**: Each Optuna trial needs separate W&B run
+- **Alternative considered**: Single run with trial as subrun (not well supported)
+- **Trade-off**: Slightly more overhead, but clean separation of trials
+
+**Decision 3**: Persist Optuna study to SQLite database
+- **Rationale**: Enables resume after Colab timeout
+- **Alternative considered**: In-memory study (lost on timeout)
+- **Trade-off**: Small database file, but critical for long searches
+
+## Risks & Mitigations
+
+### Risk 1: W&B Quota from Many Trials
+- **Impact**: MEDIUM - 100+ trial sweep could use significant quota
+- **Likelihood**: LOW - Most searches are 20-50 trials
+- **Mitigation**: Document trial count recommendations, use pruning aggressively
+
+### Risk 2**: Optuna + W&B Initialization Overhead
+- **Impact**: LOW - Each trial has 2-3 second startup cost
+- **Likelihood**: HIGH - Happens every trial
+- **Mitigation**: Acceptable for trials that run minutes, not significant bottleneck
+
+### Risk 3: Sweep Resume Complexity
+- **Impact**: MEDIUM - Users might not realize they need SQLite storage
+- **Likelihood**: MEDIUM - Easy to forget
+- **Mitigation**: Clear documentation, auto-create storage DB, print resume instructions
+
+## Progress Log
+
+- [ ] Created task specification (this file)
+- [ ] Integrated W&B logging into Optuna objective
+- [ ] Added sweep configuration templates
+- [ ] Tested 20+ trial sweep
+- [ ] Documented sweep setup and interpretation
+- [ ] Committed changes with message: "feat(mlops): integrate W&B with Optuna hyperparameter sweeps"
+
+## Completion Checklist
+
+- [ ] All acceptance criteria met (10/10 checked)
+- [ ] All test scenarios pass (4/4 verified)
+- [ ] Code follows style guide
+- [ ] Documentation complete
+- [ ] No regressions
+- [ ] Tested in Colab
+- [ ] Git committed
