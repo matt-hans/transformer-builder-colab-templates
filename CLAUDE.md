@@ -6,14 +6,85 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repository provides Colab-ready notebooks and test utilities for validating transformer models exported from [Transformer Builder](https://transformer-builder.com). The main workflow: users build a transformer visually, export to Colab, and the template automatically loads and validates their model through a 3-tier testing suite.
 
+## Requirements Files Strategy
+
+This repository uses a **three-file requirements strategy** to support different use cases:
+
+### 1. `requirements.txt` - Local Development
+**Purpose**: Reproducible local development environments with exact version pins.
+
+**Use for**:
+- Setting up virtual environments (`python -m venv .venv`)
+- Running tests locally (`pytest`)
+- Developing `utils/` test functions
+- Debugging with exact package versions
+
+**Installation**:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -U pip
+pip install -r requirements.txt
+```
+
+### 2. `requirements-training.txt` - Training Notebook Only
+**Purpose**: Exact version pins for `training.ipynb` (Tier 3 Training Utilities).
+
+**Use for**:
+- Reproducible fine-tuning experiments in `training.ipynb`
+- Hyperparameter search with Optuna
+- Metrics tracking with W&B
+- Installing training dependencies in fresh Colab runtime
+
+**Installation** (in `training.ipynb`):
+```python
+# Cell 1 of training.ipynb
+!pip install -r requirements-training.txt
+```
+
+### 3. `requirements-colab-v3.4.0.txt` - Documentation & Training Notebook Reference
+**Purpose**: Documents Colab's zero-installation strategy and provides training dependencies.
+
+**CRITICAL - Two Distinct Sections**:
+1. **Template Section (Lines 22-36)**: Documentation ONLY - DO NOT INSTALL
+   - `template.ipynb` uses zero-installation strategy (Colab pre-installed packages)
+   - Installing packages in template.ipynb causes NumPy corruption
+   - This section exists purely for reference/documentation
+
+2. **Training Section (Lines 38-50)**: Install in `training.ipynb` ONLY
+   - `training.ipynb` runs in fresh Colab runtime
+   - Installs pytorch-lightning, optuna, torchmetrics for Tier 3 tests
+   - Safe to install because training notebook uses separate runtime
+
+**Version Strategy**:
+- Uses range pins (`>=`) for Colab compatibility (evolving runtime)
+- For exact reproducibility, use `requirements-training.txt` (exact pins `==`)
+- Documents version deviations and intentional package omissions (see file footer)
+
+### Architecture Decision Rationale
+
+**Why three files?**
+1. **Local Dev** (`requirements.txt`): Developers need exact versions for reproducibility
+2. **Training** (`requirements-training.txt`): Training experiments need consistent training stack
+3. **Template** (`requirements-colab-v3.4.0.txt`): Zero-installation strategy prevents dependency corruption
+
+**Why exact pins (`==`)?**
+- Reproducibility across environments
+- Prevent transitive dependency conflicts
+- Enable precise bug reproduction
+- Match tested configurations
+
 ## Common Development Commands
 
 ### Local Development Setup
 ```bash
-# Create virtual environment and install dependencies
+# Recommended: Use requirements.txt for exact versions
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -U pip
+pip install -r requirements.txt
+
+# Alternative: Manual installation (may differ from tested versions)
 pip install torch numpy pandas matplotlib seaborn scipy jupyter
 ```
 
@@ -279,5 +350,6 @@ Following conventions from AGENTS.md:
 ## Security Notes
 
 - The template fetches arbitrary code from GitHub Gists—review before execution
-- Never commit API keys or credentials—use environment variables
+- **Never commit config_*.json files**—they may contain API keys (auto-ignored via .gitignore)
+- Use environment variables for credentials in production: `os.getenv('WANDB_API_KEY')`
 - For offline/airgapped environments, copy `utils/test_functions.py` locally instead of downloading from remote URLs
