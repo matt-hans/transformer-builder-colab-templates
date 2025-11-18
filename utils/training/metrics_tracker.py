@@ -16,7 +16,9 @@ Supports both online (W&B) and offline (local storage) modes with error resilien
 import numpy as np
 import pandas as pd
 import torch
-from typing import Dict, Literal
+import threading
+from datetime import datetime
+from typing import Dict, Literal, Optional
 
 
 class MetricsTracker:
@@ -57,6 +59,9 @@ class MetricsTracker:
         """
         self.use_wandb = use_wandb
         self.metrics_history = []
+        self._step_metrics = []  # Store per-step scalar metrics
+        self._global_step = 0    # Auto-increment counter for step
+        self._lock = threading.Lock()  # Thread safety for multi-worker DataLoader
 
     def compute_perplexity(self, loss: float) -> float:
         """
@@ -131,6 +136,104 @@ class MetricsTracker:
 
         accuracy = correct.sum().item() / total_valid
         return accuracy
+
+    def log_scalar(
+        self,
+        metric_name: str,
+        value: float,
+        step: Optional[int] = None
+    ) -> None:
+        """
+        Log a scalar metric at a specific training step.
+
+        Used for per-batch/per-step metrics like learning rate, gradient norms,
+        or GPU utilization. Complements log_epoch() for finer-grained tracking.
+
+        Thread-safe for use with multi-worker DataLoader (num_workers > 0).
+        Uses threading.Lock() to prevent race conditions when multiple threads
+        log metrics concurrently.
+
+        Args:
+            metric_name: Metric identifier (e.g., 'train/learning_rate', 'gpu/memory_mb').
+                         Must be non-empty string.
+            value: Numeric value to log. Must be int or float.
+            step: Training step/batch index. If None, auto-increments internal counter.
+
+        Raises:
+            ValueError: If metric_name is empty or value is non-numeric
+
+        Examples:
+            >>> tracker = MetricsTracker(use_wandb=True)
+            >>> # Log per-batch metrics in training loop
+            >>> for batch_idx, batch in enumerate(dataloader):
+            ...     loss = train_batch(batch)
+            ...     tracker.log_scalar('train/batch_loss', loss.item(), step=batch_idx)
+            ...     tracker.log_scalar('train/lr', optimizer.param_groups[0]['lr'], step=batch_idx)
+            ...
+            >>> # Auto-increment step if not provided
+            >>> tracker.log_scalar('gpu/memory_mb', 8192.5)  # step=0
+            >>> tracker.log_scalar('gpu/memory_mb', 8204.2)  # step=1
+        """
+        # Validation
+        if not metric_name or not isinstance(metric_name, str):
+            raise ValueError("metric_name must be a non-empty string")
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"value must be numeric, got {type(value).__name__}")
+
+        # Auto-increment step if not provided
+        if step is None:
+            with self._lock:
+                step = self._global_step
+                self._global_step += 1
+
+        # Log to W&B
+        if self.use_wandb:
+            try:
+                import wandb
+                wandb.log({metric_name: value}, step=step)
+            except ImportError:
+                # W&B not available, skip silently
+                pass
+
+        # Store internally for later retrieval
+        with self._lock:
+            self._step_metrics.append({
+                'step': step,
+                'metric': metric_name,
+                'value': value,
+                'timestamp': datetime.now().isoformat()
+            })
+
+    def get_step_metrics(self) -> pd.DataFrame:
+        """
+        Retrieve all logged step metrics as a DataFrame.
+
+        Returns DataFrame sorted by step in ascending order. Useful for
+        plotting training curves, analyzing per-batch behavior, and
+        debugging training dynamics.
+
+        Returns:
+            DataFrame with columns ['step', 'metric', 'value', 'timestamp'],
+            sorted by step ascending. Empty DataFrame if no metrics logged.
+
+        Examples:
+            >>> tracker = MetricsTracker()
+            >>> tracker.log_scalar('train/batch_loss', 0.8, step=10)
+            >>> tracker.log_scalar('train/batch_loss', 0.5, step=20)
+            >>> df = tracker.get_step_metrics()
+            >>> print(df[['step', 'value']])
+               step  value
+            0    10    0.8
+            1    20    0.5
+            >>>
+            >>> # Plot training curve
+            >>> import matplotlib.pyplot as plt
+            >>> loss_df = df[df['metric'] == 'train/batch_loss']
+            >>> plt.plot(loss_df['step'], loss_df['value'])
+        """
+        with self._lock:
+            df = pd.DataFrame(self._step_metrics)
+        return df.sort_values('step') if not df.empty else df
 
     def log_epoch(
         self,

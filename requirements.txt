@@ -1,0 +1,57 @@
+# Transformer Builder - Local Development Requirements
+# EXACT VERSION PINS for reproducible local development environments
+# Last Updated: 2025-11-16
+# Python: >=3.10,<3.13
+
+# ==============================================================================
+# PURPOSE: Local development and testing
+# ==============================================================================
+# This file is for:
+# - Setting up virtual environments (python -m venv .venv)
+# - Running tests locally (pytest)
+# - Developing utils/ test functions
+# - Reproducing exact package versions for debugging
+#
+# DO NOT use this file in:
+# - template.ipynb (uses zero-installation strategy)
+# - training.ipynb (uses requirements-training.txt)
+# ==============================================================================
+
+# Core ML Framework
+torch==2.9.1
+torchvision==0.24.1
+torchaudio==2.9.1
+
+# Data Science Stack
+numpy==2.3.5
+pandas==2.3.3
+scipy==1.16.3
+
+# Visualization
+matplotlib==3.10.7
+seaborn==0.13.2
+
+# Transformers & NLP
+transformers==4.57.1
+
+# Jupyter for local notebook development
+jupyter==1.1.1
+ipykernel==6.29.5
+notebook==7.3.2
+
+# Testing Framework
+pytest==8.3.4
+pytest-cov==6.0.0
+
+# Development Tools
+torchinfo==1.8.0
+
+# ==============================================================================
+# OPTIONAL TRAINING DEPENDENCIES (for local training experiments)
+# ==============================================================================
+# Uncomment if you need training utilities locally:
+# pytorch-lightning==2.5.6
+# torchmetrics==1.8.2
+# optuna==4.6.0
+# wandb==0.23.0
+# ==============================================================================

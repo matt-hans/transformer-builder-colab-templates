@@ -162,6 +162,102 @@ diff = compare_configs(config_v1, config_v2)
 # Prints: learning_rate: 5e-5 → 1e-4, batch_size: 4 → 8
 ```
 
+### Reproducibility: Deterministic vs. Fast Mode
+
+The codebase supports two reproducibility modes with different performance trade-offs:
+
+**Fast Mode (Default)**: `deterministic=False`
+- Enables cuDNN benchmark auto-tuning for ~20% speedup
+- Seeds all random number generators (Python, NumPy, PyTorch CPU/GPU)
+- DataLoader workers seeded for reproducible batch ordering
+- May have minor GPU non-determinism (<0.1% variation) from cuDNN algorithms
+- **Recommended for**: Iterative development, experimentation, quick prototyping
+
+**Deterministic Mode**: `deterministic=True`
+- Fully bit-exact reproducibility across runs
+- Disables cuDNN optimizations: `cudnn.deterministic=True`, `cudnn.benchmark=False`
+- Enables PyTorch deterministic algorithms
+- **Performance impact**: ~5-10% slower training (acceptable for final experiments)
+- **Recommended for**: Publication results, debugging, A/B testing
+
+**Usage Example:**
+```python
+from utils.training.seed_manager import set_random_seed
+from utils.tier3_training_utilities import test_fine_tuning
+
+# Fast mode for development (default)
+set_random_seed(42, deterministic=False)
+results = test_fine_tuning(
+    model=model,
+    config=config,
+    n_epochs=10,
+    random_seed=42,
+    deterministic=False  # Fast mode
+)
+
+# Deterministic mode for reproducible experiments
+set_random_seed(42, deterministic=True)
+results = test_fine_tuning(
+    model=model,
+    config=config,
+    n_epochs=10,
+    random_seed=42,
+    deterministic=True  # Bit-exact reproducibility
+)
+
+# Verify reproducibility: run twice with same seed
+losses_run1 = results['loss_history']
+results2 = test_fine_tuning(model, config, n_epochs=10, random_seed=42, deterministic=True)
+losses_run2 = results2['loss_history']
+assert losses_run1 == losses_run2  # Bit-identical in deterministic mode
+```
+
+**What Gets Seeded:**
+1. **Python random module**: `random.seed(seed)`
+2. **NumPy RNG**: `np.random.seed(seed)`
+3. **PyTorch CPU**: `torch.manual_seed(seed)`
+4. **PyTorch GPU**: `torch.cuda.manual_seed_all(seed)`
+5. **DataLoader workers**: Each worker seeded via `worker_init_fn=seed_worker`
+6. **DataLoader shuffling**: Seeded generator ensures reproducible batch order
+
+**Performance Comparison:**
+```python
+import time
+from utils.training.training_config import TrainingConfig
+
+# Fast mode benchmark
+config_fast = TrainingConfig(random_seed=42, deterministic=False)
+set_random_seed(config_fast.random_seed, config_fast.deterministic)
+start = time.time()
+results_fast = test_fine_tuning(model, config, n_epochs=5, deterministic=False)
+fast_time = time.time() - start
+
+# Deterministic mode benchmark
+config_det = TrainingConfig(random_seed=42, deterministic=True)
+set_random_seed(config_det.random_seed, config_det.deterministic)
+start = time.time()
+results_det = test_fine_tuning(model, config, n_epochs=5, deterministic=True)
+det_time = time.time() - start
+
+print(f"Fast mode: {fast_time:.1f}s")
+print(f"Deterministic mode: {det_time:.1f}s")
+print(f"Slowdown: {(det_time / fast_time - 1) * 100:.1f}%")
+# Expected: ~5-10% slower in deterministic mode
+```
+
+**Best Practices:**
+- **Development**: Use `deterministic=False` for 100s of experiments (20% faster)
+- **Final experiments**: Use `deterministic=True` for publication-ready results
+- **Debugging**: Use `deterministic=True` to ensure bugs are reproducible
+- **A/B testing**: Use `deterministic=True` to isolate changes from randomness
+- **Colab timeout**: If hitting 12-hour limit, use `deterministic=False` to save time
+
+**Limitations:**
+- Deterministic mode covers 99% of PyTorch operations
+- Some exotic operations (e.g., scatter_add on GPU) may still have minor non-determinism
+- Multi-GPU distributed training may have edge cases even in deterministic mode
+- See [PyTorch Reproducibility Guide](https://pytorch.org/docs/stable/notes/randomness.html) for details
+
 ### Using MetricsTracker for Training with W&B
 ```python
 from utils.training.metrics_tracker import MetricsTracker
@@ -194,7 +290,17 @@ tracker = MetricsTracker(use_wandb=True)
 
 # In your training loop
 for epoch in range(n_epochs):
-    # ... training code ...
+    for batch_idx, batch in enumerate(dataloader):
+        # Training step
+        loss = train_batch(model, batch, optimizer)
+
+        # Log per-batch metrics (NEW in v3.4.0)
+        global_step = epoch * len(dataloader) + batch_idx
+        tracker.log_scalar('train/batch_loss', loss.item(), step=global_step)
+        tracker.log_scalar('train/learning_rate', optimizer.param_groups[0]['lr'], step=global_step)
+        tracker.log_scalar('train/gradient_norm', grad_norm, step=global_step)
+
+    # Log per-epoch metrics (existing)
     tracker.log_epoch(
         epoch=epoch,
         train_metrics={'loss': train_loss, 'accuracy': train_acc},
@@ -205,9 +311,230 @@ for epoch in range(n_epochs):
     )
 
 # Export metrics for analysis
-summary_df = tracker.get_summary()
+summary_df = tracker.get_summary()  # Epoch-level metrics
+step_df = tracker.get_step_metrics()  # Per-batch metrics (NEW)
+
 summary_df.to_csv('training_metrics.csv', index=False)
+step_df.to_csv('batch_metrics.csv', index=False)
 ```
+
+### Using ExperimentDB for Local Experiment Tracking
+
+Track experiments locally with SQLite as a lightweight alternative to W&B (or use both for redundancy).
+
+```python
+from utils.training.experiment_db import ExperimentDB
+from utils.training.training_config import TrainingConfig
+
+# Initialize local database
+db = ExperimentDB('experiments.db')
+
+# Create run
+config = TrainingConfig(learning_rate=5e-5, batch_size=4, epochs=10)
+run_id = db.log_run('baseline-v1', config.to_dict(), notes='Initial baseline')
+
+# Training loop with dual logging (W&B + SQLite)
+for epoch in range(10):
+    train_loss = train_epoch(model, dataloader)
+    val_loss = validate(model, val_dataloader)
+
+    # Log to SQLite
+    db.log_metric(run_id, 'train/loss', train_loss, epoch=epoch)
+    db.log_metric(run_id, 'val/loss', val_loss, epoch=epoch)
+
+    # Log per-batch metrics (optional)
+    for step, batch_loss in enumerate(batch_losses):
+        global_step = epoch * len(dataloader) + step
+        db.log_metric(run_id, 'train/batch_loss', batch_loss, step=global_step, epoch=epoch)
+
+# Log artifacts
+db.log_artifact(run_id, 'checkpoint', 'checkpoints/best.pt',
+                metadata={'epoch': 5, 'val_loss': 0.38})
+
+# Mark run complete
+db.update_run_status(run_id, 'completed')
+
+# Compare multiple runs
+comparison = db.compare_runs([1, 2, 3])
+print(comparison[['run_name', 'best_val_loss', 'best_epoch']])
+
+# Find best run
+best = db.get_best_run('val/loss', mode='min')
+print(f"Best: {best['run_name']} (loss={best['best_value']:.4f} at epoch {best['best_epoch']})")
+
+# Query metrics
+metrics = db.get_metrics(run_id, 'train/loss')
+print(metrics[['epoch', 'value']])
+
+# Export for analysis
+import pandas as pd
+all_runs = db.list_runs(limit=10)
+all_runs.to_csv('experiment_summary.csv', index=False)
+```
+
+**Key Features:**
+- **Zero dependencies**: Uses built-in SQLite (no internet required)
+- **Dual logging**: Works alongside W&B for redundancy
+- **Epoch + step metrics**: Matches MetricsTracker granularity
+- **Artifact tracking**: Store checkpoint paths with metadata
+- **SQL queries**: Direct database access for complex analysis
+- **Portable**: Single `.db` file, easy to backup/share
+
+**Example: Hyperparameter Search with ExperimentDB**
+```python
+from utils.training.experiment_db import ExperimentDB
+
+db = ExperimentDB('hyperparam_search.db')
+
+for lr in [1e-5, 5e-5, 1e-4]:
+    for bs in [4, 8, 16]:
+        config = TrainingConfig(learning_rate=lr, batch_size=bs)
+        run_id = db.log_run(f'lr{lr}_bs{bs}', config.to_dict())
+
+        # Train and log
+        results = test_fine_tuning(model, config, n_epochs=5)
+        for epoch, loss in enumerate(results['loss_history']):
+            db.log_metric(run_id, 'val/loss', loss, epoch=epoch)
+
+        db.update_run_status(run_id, 'completed')
+
+# Find best hyperparameters
+best = db.get_best_run('val/loss', mode='min')
+print(f"Best config: {best['config']}")
+```
+
+### Learning Rate Warmup + Cosine Decay
+
+Enable industry-standard LR scheduling with linear warmup (10% steps) followed by cosine decay to 0.
+
+```python
+from utils.tier3_training_utilities import test_fine_tuning
+
+results = test_fine_tuning(
+    model=model,
+    config=config,
+    n_epochs=10,
+    learning_rate=5e-5,
+    use_lr_schedule=True,   # default True
+    use_wandb=True
+)
+
+# LR is logged each epoch as 'train/learning_rate' in W&B and summary
+```
+
+### Gradient Clipping
+
+Prevent gradient explosions by clipping gradients to a maximum norm.
+
+```python
+from utils.tier3_training_utilities import test_fine_tuning
+
+results = test_fine_tuning(
+    model=model,
+    config=config,
+    n_epochs=5,
+    learning_rate=5e-5,
+    gradient_clip_norm=1.0  # default 1.0; set None to disable
+)
+
+# Logs (per epoch):
+#  - gradients/pre_clip_norm
+#  - gradients/post_clip_norm
+```
+
+### Logging Best Practices
+
+Use Python's `logging` instead of `print()` for production-friendly diagnostics.
+
+```python
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        # Optional file output
+        # logging.FileHandler('training.log')
+    ]
+)
+
+from utils.tier3_training_utilities import test_fine_tuning
+results = test_fine_tuning(model, config, n_epochs=3)
+
+# To increase verbosity during debugging
+logging.getLogger('utils').setLevel(logging.DEBUG)
+```
+
+### Static Type Checking (mypy)
+
+Run mypy to validate type hints and catch issues early:
+
+```bash
+mypy utils/ --config-file mypy.ini
+```
+
+### GPU Metrics Tracking
+
+Track GPU memory, utilization, and temperature during training.
+
+- Memory: `gpu/memory_allocated_mb`, `gpu/memory_reserved_mb` (always when CUDA is available)
+- Utilization & Temperature: `gpu/utilization_percent`, `gpu/temperature_celsius` (requires `pynvml` or `nvidia-smi`)
+
+Install optional dependency in Colab for full metrics:
+
+```python
+!pip install pynvml
+```
+
+Metrics appear in W&B under the `gpu/` namespace and are logged once per epoch.
+
+The config (`mypy.ini`) enables strict checks while ignoring missing stubs for heavy third‑party libs (torch, transformers, datasets). Public functions in `utils/` include type hints to improve IDE support and reliability.
+
+### Padding Token Handling in Training
+
+**All training functions (`test_fine_tuning`, `test_hyperparameter_search`) automatically exclude padding tokens from loss calculation.** This ensures accurate metrics and prevents the model from learning to predict padding.
+
+**How it works:**
+1. **Automatic Detection**: `pad_token_id` is detected from `config.pad_token_id` or `config.tokenizer.pad_token_id`
+2. **Fallback**: Defaults to `pad_token_id=0` if not found (with warning)
+3. **Loss Masking**: All `F.cross_entropy` calls use `ignore_index=pad_token_id`
+4. **Consistent Application**: Applied to both training and validation loops
+
+**Example with custom padding:**
+```python
+from types import SimpleNamespace
+from utils.tier3_training_utilities import test_fine_tuning
+
+# Config with custom pad_token_id (e.g., GPT-2 uses EOS token as padding)
+config = SimpleNamespace(
+    vocab_size=50257,
+    max_seq_len=128,
+    pad_token_id=50256  # GPT-2 EOS token
+)
+
+# Training automatically uses ignore_index=50256
+results = test_fine_tuning(
+    model=model,
+    config=config,
+    n_epochs=10,
+    batch_size=4
+)
+
+# Loss and perplexity exclude padding tokens
+print(f"Final loss (excl. padding): {results['final_loss']:.4f}")
+print(f"Perplexity: {results['metrics_summary']['val/perplexity'].iloc[-1]:.2f}")
+```
+
+**Expected behavior:**
+- With padding: Loss values are ~20-40% lower than without masking (padding excluded)
+- Without padding attribute: Warning logged: "⚠️  No pad_token_id found in config/tokenizer, defaulting to 0"
+- Perplexity correctly computed as `exp(masked_loss)`
+
+**Why this matters:**
+- **Correct metrics**: Loss/perplexity reflect actual language modeling performance, not padding prediction
+- **Training efficiency**: Gradients focus on real tokens, not wasted capacity on padding
+- **Baseline compatibility**: Matches HuggingFace transformers' default behavior
 
 ## Architecture & Code Organization
 
@@ -353,3 +680,25 @@ Following conventions from AGENTS.md:
 - **Never commit config_*.json files**—they may contain API keys (auto-ignored via .gitignore)
 - Use environment variables for credentials in production: `os.getenv('WANDB_API_KEY')`
 - For offline/airgapped environments, copy `utils/test_functions.py` locally instead of downloading from remote URLs
+
+### Pre-commit Secret Scanning Hook (Task T050)
+
+Add a lightweight pre-commit hook that blocks commits when common secrets are detected in staged files.
+
+Setup (one-time per clone):
+```bash
+# From repository root
+cp .github/hooks/pre-commit .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+What it detects:
+- `WANDB_API_KEY=...`, `hf_...` (Hugging Face), `sk-...` (OpenAI), `ghp_...` (GitHub), and AWS secret keys
+
+Behavior:
+- Blocks commit and prints remediation steps when a secret is found
+- For exceptional cases, you may bypass once with `git commit --no-verify` (use sparingly)
+
+Notes:
+- Hook is versioned at `.github/hooks/pre-commit`; Git does not track `.git/hooks` so collaborators must copy it locally
+- Designed to be portable (Bash), no external dependencies

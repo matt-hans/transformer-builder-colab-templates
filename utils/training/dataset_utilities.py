@@ -11,6 +11,7 @@ Includes automatic preprocessing, validation, and statistics.
 """
 
 import os
+import time
 import json
 import pandas as pd
 from pathlib import Path
@@ -98,15 +99,27 @@ class DatasetLoader:
             print(f" ({config_name})", end="")
         print()
 
-        try:
-            dataset = load_dataset(
-                dataset_name,
-                config_name,
-                split=split,
-                streaming=streaming,
-                trust_remote_code=trust_remote_code,
-                cache_dir=self.cache_dir
-            )
+        # Retry with exponential backoff for transient network errors
+        last_exc = None
+        for attempt in range(3):
+            try:
+                dataset = load_dataset(
+                    dataset_name,
+                    config_name,
+                    split=split,
+                    streaming=streaming,
+                    trust_remote_code=trust_remote_code,
+                    cache_dir=self.cache_dir
+                )
+                break
+            except Exception as e:
+                last_exc = e
+                if attempt == 2:
+                    print(f"❌ Failed to load dataset after retries: {e}")
+                    raise
+                wait = 2 ** attempt
+                print(f"⚠️  Network error loading dataset, retrying in {wait}s... ({attempt + 1}/3)")
+                time.sleep(wait)
 
             if not streaming:
                 if isinstance(dataset, Dataset):
@@ -114,11 +127,7 @@ class DatasetLoader:
                 else:
                     print(f"✓ Loaded dataset with splits: {list(dataset.keys())}")
 
-            return dataset
-
-        except Exception as e:
-            print(f"❌ Failed to load dataset: {e}")
-            raise
+        return dataset
 
     def load_local_file(self,
                        file_path: Union[str, Path],

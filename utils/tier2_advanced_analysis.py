@@ -9,11 +9,14 @@ This module contains advanced diagnostic tests for transformer models:
 These tests provide deeper insights into model behavior beyond basic validation.
 """
 
+import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Any, Dict, List, Optional
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 def _detect_vocab_size(model: nn.Module, config: Any) -> int:
@@ -35,7 +38,10 @@ def _detect_vocab_size(model: nn.Module, config: Any) -> int:
             return module.num_embeddings
 
     # Fallback with warning
-    print("⚠️ Could not detect vocab_size, using default 50257 (GPT-2)")
+    try:
+        logger.warning("Could not detect vocab_size, using default 50257 (GPT-2)")
+    except Exception:
+        pass
     return 50257
 
 
@@ -170,13 +176,19 @@ def test_attention_patterns(
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        print("⚠️ matplotlib not installed, skipping visualization")
+        try:
+            logger.warning("matplotlib not installed, skipping visualization")
+        except Exception:
+            pass
         plt = None
 
     try:
         import seaborn as sns
     except ImportError:
-        print("⚠️ seaborn not installed, using matplotlib only")
+        try:
+            logger.warning("seaborn not installed, using matplotlib only")
+        except Exception:
+            pass
         sns = None
 
     device = next(model.parameters()).device

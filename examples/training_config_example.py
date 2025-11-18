@@ -18,7 +18,7 @@ import sys
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.training.training_config import TrainingConfig, compare_configs
+from utils.training.training_config import TrainingConfig, compare_configs, print_config_diff
 from utils.training.seed_manager import set_random_seed
 
 # ==============================================================================
@@ -201,9 +201,9 @@ experiment_1 = TrainingConfig(
 # Compare configurations
 print("\nComparing baseline vs experiment 1:")
 diff = compare_configs(baseline, experiment_1)
+print_config_diff(diff)
 
-# The compare_configs function prints a summary, but you can also
-# programmatically access the differences:
+# You can also programmatically access the differences:
 if diff['changed']:
     print("\nProgrammatic access to changes:")
     for field, (old_val, new_val) in diff['changed'].items():

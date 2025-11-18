@@ -1,0 +1,4 @@
+{"timestamp":"2025-11-16T18:08:00Z","agent":"verify-test-quality","task_id":"T017","stage":2,"result":"PASS","score":82,"duration_ms":15000,"issues":5,"critical_issues":0,"high_issues":0,"medium_issues":2,"low_issues":3,"tests_found":31,"assertions":140,"mock_ratio":5,"flaky_tests":0,"edge_coverage":65,"mutation_score_est":70}
+{"timestamp":"2025-11-16T23:07:25Z","agent":"verify-business-logic","task_id":"T017","stage":2,"result":"PASS","score":100,"duration_ms":1850,"issues":0}
+{"timestamp":"2025-11-16T23:11:11Z","agent":"verify-error-handling","task_id":"T017","stage":4,"result":"BLOCK","score":35,"duration_ms":0,"issues":3}
+{"timestamp":"2025-11-16T23:30:00Z","agent":"verify-documentation","task_id":"T017","stage":4,"result":"PASS","score":95,"duration_ms":850,"issues":1}

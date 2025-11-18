@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Pre-commit hook: Detect secrets in staged files (Task T050)
+# Portable Bash (no associative arrays) for macOS/Linux/WSL compatibility
+
+set -euo pipefail
+IFS=$'\n\t'
+
+# Colors (fallback to no color if not a TTY)
+if [ -t 1 ]; then
+  RED='\033[0;31m'
+  YELLOW='\033[1;33m'
+  GREEN='\033[0;32m'
+  NC='\033[0m'
+else
+  RED=''
+  YELLOW=''
+  GREEN=''
+  NC=''
+fi
+
+# Ensure required tools exist
+if ! command -v git >/dev/null 2>&1; then
+  echo "${RED}ERROR:${NC} git not found in PATH" >&2
+  exit 1
+fi
+if ! command -v grep >/dev/null 2>&1; then
+  echo "${RED}ERROR:${NC} grep not found in PATH" >&2
+  exit 1
+fi
+
+# Secret patterns: label:::regex
+# Notes:
+# - Use -I with grep to ignore binary files
+# - Patterns are intentionally conservative to favor catching real secrets
+PATTERNS=(
+  "WANDB_API_KEY:::WANDB_API_KEY[[:space:]]*=[[:space:]]*[\"'][A-Za-z0-9]{32,}[\"']"
+  "HF_TOKEN:::hf_[A-Za-z0-9]{34,}"
+  "OPENAI_API_KEY:::sk-[A-Za-z0-9]{32,}"
+  "GITHUB_TOKEN:::ghp_[A-Za-z0-9]{36,}"
+  "AWS_SECRET:::aws_secret_access_key[[:space:]]*=[[:space:]]*[A-Za-z0-9/+=]{40}"
+)
+
+echo -e "🔒 Running pre-commit secret scan..."
+
+SECRETS_FOUND=0
+
+# Read null-delimited staged file list directly from git
+FILES_STREAM_CMD=(git diff --cached --name-only --diff-filter=ACM -z)
+
+if ! out="$(${FILES_STREAM_CMD[@]} | wc -c | tr -d '[:space:]')"; then
+  echo -e "${YELLOW}Warning:${NC} unable to list staged files; skipping scan."
+  exit 0
+fi
+
+if [ "$out" = "0" ]; then
+  echo -e "${GREEN}No staged files to scan.${NC}"
+  exit 0
+fi
+
+while IFS= read -r -d '' FILE; do
+  # Skip if file no longer exists (e.g., renamed then unstaged)
+  [ -f "$FILE" ] || continue
+
+  # Skip documentation files that may contain example secrets
+  case "$FILE" in
+    *.md|*.MD|*.txt|*.rst|*.adoc|*.org)
+      continue
+      ;;
+  esac
+
+  # Scan file against all patterns
+  for ENTRY in "${PATTERNS[@]}"; do
+    NAME="${ENTRY%%:::*}"
+    REGEX="${ENTRY#*:::}"
+
+    if MATCHES=$(grep -I -nE "$REGEX" "$FILE" 2>/dev/null); then
+      if [ -n "$MATCHES" ]; then
+        SECRETS_FOUND=1
+        echo -e "${RED}❌ SECRET DETECTED:${NC} $NAME in $FILE"
+        # Print each matching line with line number
+        # shellcheck disable=SC2001
+        echo "$MATCHES" | while IFS= read -r LINE; do
+          echo "   Line: $LINE"
+        done
+      fi
+    fi
+  done
+done < <("${FILES_STREAM_CMD[@]}")
+
+if [ "$SECRETS_FOUND" -eq 1 ]; then
+  echo ""
+  echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${RED}🔒 COMMIT BLOCKED: Secrets detected in staged files${NC}"
+  echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo ""
+  echo "Remediation options:"
+  echo "  1. Remove secrets from files and use environment variables."
+  echo "     Example (Python): os.getenv('WANDB_API_KEY')"
+  echo "  2. Add config files to .gitignore if they contain credentials."
+  echo "  3. If a false positive, you may bypass once with: git commit --no-verify"
+  echo ""
+  exit 1
+fi
+
+echo -e "${GREEN}✅ No secrets detected.${NC}"
+exit 0

@@ -6,6 +6,7 @@ huggingface_hub is not installed or in offline environments.
 """
 
 import os
+import time
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -35,19 +36,38 @@ def push_model_to_hub(
 
     try:
         api = HfApi()
-        # Create repository (idempotent)
-        create_repo(repo_name, private=private, exist_ok=True)
+        # Create repository (idempotent) with basic backoff
+        for attempt in range(3):
+            try:
+                create_repo(repo_name, private=private, exist_ok=True)
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                wait = 2 ** attempt
+                print(f"⚠️  HF Hub create_repo failed, retrying in {wait}s... ({attempt + 1}/3)")
+                time.sleep(wait)
         print(f"✅ Repository created/verified: {repo_name}")
 
         # Save local files
         out = _write_local(model, config, training_results, local_dir)
 
-        # Upload folder
-        api.upload_folder(
-            folder_path=out,
-            repo_id=repo_name,
-            commit_message=commit_message
-        )
+        # Upload folder with backoff
+        for attempt in range(3):
+            try:
+                api.upload_folder(
+                    folder_path=out,
+                    repo_id=repo_name,
+                    commit_message=commit_message
+                )
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                wait = 2 ** attempt
+                print(f"⚠️  HF Hub upload failed, retrying in {wait}s... ({attempt + 1}/3)")
+                time.sleep(wait)
+
         url = f"https://huggingface.co/{repo_name}"
         print(f"✅ Model uploaded: {url}")
         return url
@@ -118,4 +138,3 @@ Trained with Transformer Builder templates. This repository contains the trained
 - README.md
 """
     return card
-

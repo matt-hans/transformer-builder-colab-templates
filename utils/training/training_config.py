@@ -44,6 +44,7 @@ Architecture:
 from dataclasses import dataclass, asdict, field
 from typing import Optional, Literal, Dict, Tuple, Any
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -238,6 +239,18 @@ class TrainingConfig:
 
         # Report all errors together
         if errors:
+            # Log config values for debugging production issues
+            logger = logging.getLogger(__name__)
+            logger.error(
+                f"Configuration validation failed for config with:\n"
+                f"  learning_rate={self.learning_rate}, batch_size={self.batch_size}, "
+                f"epochs={self.epochs}\n"
+                f"  warmup_ratio={self.warmup_ratio}, validation_split={self.validation_split}\n"
+                f"  d_model={self.d_model}, num_heads={self.num_heads}\n"
+                f"  vocab_size={self.vocab_size}, max_seq_len={self.max_seq_len}\n"
+                f"Errors:\n" + "\n".join(f"  - {e}" for e in errors)
+            )
+
             error_message = "Configuration validation failed:\n" + "\n".join(
                 f"  - {e}" for e in errors
             )
@@ -278,9 +291,25 @@ class TrainingConfig:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             path = f"config_{timestamp}.json"
 
-        # Convert to dictionary and serialize
-        with open(path, 'w') as f:
-            json.dump(asdict(self), f, indent=2)
+        # Convert to dictionary and serialize with error handling
+        try:
+            with open(path, 'w') as f:
+                json.dump(asdict(self), f, indent=2)
+        except PermissionError as e:
+            raise IOError(
+                f"Permission denied writing configuration to {path}. "
+                f"Check file/directory permissions. Original error: {e}"
+            )
+        except OSError as e:
+            raise IOError(
+                f"Failed to write configuration to {path}. "
+                f"Possible causes: disk full, invalid path, I/O error. "
+                f"Original error: {e}"
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Unexpected error saving configuration to {path}: {e}"
+            )
 
         print(f"✅ Configuration saved to {path}")
         return path
@@ -315,11 +344,43 @@ class TrainingConfig:
             loaded config is still valid (in case of manual edits or schema
             version changes).
         """
-        with open(path, 'r') as f:
-            config_dict = json.load(f)
+        # Load and parse JSON with comprehensive error handling
+        try:
+            with open(path, 'r') as f:
+                config_dict = json.load(f)
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"Configuration file not found: {path}\n"
+                f"Expected a JSON file created by TrainingConfig.save(). "
+                f"Check that the file exists and the path is correct."
+            )
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Invalid JSON in configuration file {path}.\n"
+                f"The file may be corrupted or not valid JSON syntax.\n"
+                f"JSON error: {e}"
+            )
+        except PermissionError as e:
+            raise IOError(
+                f"Permission denied reading configuration from {path}. "
+                f"Check file permissions. Original error: {e}"
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Unexpected error reading configuration from {path}: {e}"
+            )
 
-        # Instantiate from dict
-        config = cls(**config_dict)
+        # Instantiate from dict with type checking
+        try:
+            config = cls(**config_dict)
+        except TypeError as e:
+            raise ValueError(
+                f"Invalid configuration structure in {path}.\n"
+                f"The JSON may be from an incompatible version or contain "
+                f"unexpected fields.\n"
+                f"Type error: {e}"
+            )
+
         print(f"✅ Configuration loaded from {path}")
         return config
 
@@ -373,9 +434,9 @@ def compare_configs(
         }
 
     Note:
-        Prints a summary of changes to stdout for quick inspection.
         Metadata fields (created_at, run_name) are automatically excluded
         from comparison as they're expected to differ between runs.
+        Use print_config_diff() to display differences in human-readable format.
     """
     dict1 = config1.to_dict()
     dict2 = config2.to_dict()
@@ -413,7 +474,27 @@ def compare_configs(
             if v1 != v2:
                 differences['changed'][key] = (v1, v2)
 
-    # Print summary for user convenience
+    return differences
+
+
+def print_config_diff(differences: Dict[str, Dict[str, Any]]) -> None:
+    """
+    Pretty-print configuration differences to stdout.
+
+    Displays changes in a human-readable format with unicode symbols
+    for quick visual inspection of what changed between configurations.
+
+    Args:
+        differences: Dict returned by compare_configs() with keys:
+                     'changed', 'added', 'removed'
+
+    Example:
+        >>> diff = compare_configs(config1, config2)
+        >>> print_config_diff(diff)
+        🔍 Configuration Differences:
+          learning_rate: 5e-5 → 1e-4
+          batch_size: 4 → 8
+    """
     if differences['changed']:
         print("🔍 Configuration Differences:")
         for key, (old, new) in differences['changed'].items():
@@ -431,11 +512,10 @@ def compare_configs(
         for key, value in differences['removed'].items():
             print(f"  {key}: {value}")
 
-    return differences
-
 
 # Public API
 __all__ = [
     'TrainingConfig',
     'compare_configs',
+    'print_config_diff',
 ]

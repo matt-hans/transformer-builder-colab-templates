@@ -12,13 +12,18 @@ This module contains essential validation tests that verify core model functiona
 These tests should pass before proceeding to advanced analysis or training.
 """
 
+import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List, Union, TYPE_CHECKING
+if TYPE_CHECKING:
+    import pandas as pd  # type: ignore
 import time
 import numpy as np
 import inspect
+
+logger = logging.getLogger(__name__)
 
 
 def _detect_vocab_size(model: nn.Module, config: Any) -> int:
@@ -40,7 +45,7 @@ def _detect_vocab_size(model: nn.Module, config: Any) -> int:
             return module.num_embeddings
 
     # Fallback with warning
-    print("⚠️ Could not detect vocab_size, using default 50257 (GPT-2)")
+    logger.warning("Could not detect vocab_size, using default 50257 (GPT-2)")
     return 50257
 
 
@@ -120,7 +125,10 @@ def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor,
     return output
 
 
-def test_shape_robustness(model: nn.Module, config: Any) -> Any:
+def test_shape_robustness(
+    model: nn.Module,
+    config: Any
+) -> Union["pd.DataFrame", List[Dict[str, Any]]]:
     """
     Validate model across diverse input shapes.
 
@@ -129,7 +137,7 @@ def test_shape_robustness(model: nn.Module, config: Any) -> Any:
     try:
         import pandas as pd
     except ImportError:
-        print("⚠️ pandas not installed, returning dict instead of DataFrame")
+        logger.warning("pandas not installed, returning dict instead of DataFrame")
         pd = None
 
     vocab_size = _detect_vocab_size(model, config)
@@ -181,7 +189,10 @@ def test_shape_robustness(model: nn.Module, config: Any) -> Any:
     return results
 
 
-def test_gradient_flow(model: nn.Module, config: Any) -> Any:
+def test_gradient_flow(
+    model: nn.Module,
+    config: Any
+) -> Union["pd.DataFrame", Dict[str, Any]]:
     """
     Verify gradients propagate through all layers.
 
@@ -190,13 +201,13 @@ def test_gradient_flow(model: nn.Module, config: Any) -> Any:
     try:
         import pandas as pd
     except ImportError:
-        print("⚠️ pandas not installed, returning dict instead of DataFrame")
+        logger.warning("pandas not installed, returning dict instead of DataFrame")
         pd = None
 
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        print("⚠️ matplotlib not installed, skipping visualization")
+        logger.warning("matplotlib not installed, skipping visualization")
         plt = None
 
     vocab_size = _detect_vocab_size(model, config)
@@ -380,7 +391,9 @@ def test_output_stability(model: nn.Module, config: Any, n_samples: int = 100) -
     return stats
 
 
-def test_parameter_initialization(model: nn.Module) -> Any:
+def test_parameter_initialization(
+    model: nn.Module
+) -> Union["pd.DataFrame", List[Dict[str, str]]]:
     """
     Verify parameter initialization is reasonable.
 
@@ -447,7 +460,10 @@ def test_parameter_initialization(model: nn.Module) -> Any:
     return param_stats
 
 
-def test_memory_footprint(model: nn.Module, config: Any) -> Any:
+def test_memory_footprint(
+    model: nn.Module,
+    config: Any
+) -> Union["pd.DataFrame", List[Dict[str, str]]]:
     """
     Measure memory usage across batch sizes.
 

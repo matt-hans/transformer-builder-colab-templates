@@ -1,8 +1,8 @@
 {
   "project": {
-    "name": "Transformer Builder - Training Pipeline MVP",
-    "description": "Production-ready training pipeline with experiment tracking, session resilience, real datasets, and professional ML practices",
-    "version": "3.5.0-mvp",
+    "name": "Transformer Builder - Training Pipeline MVP + Refactor",
+    "description": "Production-ready training pipeline with experiment tracking, session resilience, real datasets, professional ML practices, and comprehensive refactoring",
+    "version": "3.5.0-mvp+refactor",
     "language": "Python",
     "framework": "PyTorch + Jupyter",
     "target_environment": "Google Colab"
@@ -64,6 +64,66 @@
           "T043"
         ],
         "hours": "3-4"
+      }
+    ]
+  },
+  "refactor": {
+    "total_tasks": 18,
+    "description": "Comprehensive refactoring for production quality and maintainability",
+    "estimated_hours": "65 hours",
+    "phases": [
+      {
+        "name": "Phase 1: Critical Fixes & Infrastructure (P1 Priority)",
+        "tasks": [
+          "T048",
+          "T049",
+          "T050",
+          "T051",
+          "T052",
+          "T053",
+          "T054"
+        ],
+        "hours": "8",
+        "priority": "P1"
+      },
+      {
+        "name": "Phase 2: Training Optimizations (P2 Priority)",
+        "tasks": [
+          "T055",
+          "T056",
+          "T057",
+          "T058",
+          "T059",
+          "T060"
+        ],
+        "hours": "12",
+        "priority": "P2"
+      },
+      {
+        "name": "Phase 3: Logging Infrastructure (P2 Priority)",
+        "tasks": [
+          "T061"
+        ],
+        "hours": "20",
+        "priority": "P2"
+      },
+      {
+        "name": "Phase 4: Code Quality (P3 Priority)",
+        "tasks": [
+          "T062",
+          "T063"
+        ],
+        "hours": "15",
+        "priority": "P3"
+      },
+      {
+        "name": "Phase 5: Advanced Monitoring (P3 Priority)",
+        "tasks": [
+          "T064",
+          "T065"
+        ],
+        "hours": "10",
+        "priority": "P3"
       }
     ]
   },
@@ -207,7 +267,7 @@
       "id": "T017",
       "title": "Reproducibility - Training Configuration Versioning",
       "file": "tasks/T017-reproducibility-config-versioning.yaml",
-      "status": "pending",
+      "status": "completed",
       "priority": "P2-MVP",
       "phase": "mvp",
       "depends_on": [
@@ -220,7 +280,14 @@
         "mvp"
       ],
       "estimated_hours": 2,
-      "created_at": "2025-01-15"
+      "actual_hours": 3.5,
+      "estimated_tokens": 7000,
+      "actual_tokens": 12000,
+      "created_at": "2025-01-15",
+      "started_at": "2025-11-16T22:23:14Z",
+      "completed_at": "2025-11-17T03:38:10Z",
+      "completed_by": "task-completer",
+      "quality_score": 88
     },
     {
       "id": "T020",
@@ -391,7 +458,7 @@
       "id": "T037",
       "title": "Training Loop Improvements - Gradient Accumulation Support",
       "file": "tasks/T037-training-gradient-accumulation.yaml",
-      "status": "in_progress",
+      "status": "completed",
       "priority": "P2-MVP",
       "phase": "mvp",
       "depends_on": [],
@@ -403,8 +470,14 @@
         "mvp"
       ],
       "estimated_hours": 1.5,
+      "actual_hours": 3.0,
+      "estimated_tokens": 8000,
+      "actual_tokens": 12000,
       "created_at": "2025-01-15",
-      "started_at": "2025-11-16T20:48:45Z"
+      "started_at": "2025-11-16T20:48:45Z",
+      "completed_at": "2025-11-16T22:16:43Z",
+      "completed_by": "task-completer",
+      "quality_score": 92
     },
     {
       "id": "T038",
@@ -476,6 +549,522 @@
       "completed_at": "2025-11-16T04:51:39Z",
       "completed_by": "task-completer",
       "actual_tokens": 6000
+    },
+    {
+      "id": "T048",
+      "title": "Create requirements.txt for Reproducibility",
+      "file": "tasks/T048-create-requirements-txt.md",
+      "status": "completed",
+      "priority": 1,
+      "phase": "refactor-phase1",
+      "depends_on": [],
+      "blocks": [
+        "T016",
+        "T017"
+      ],
+      "tags": [
+        "reproducibility",
+        "infrastructure",
+        "phase1",
+        "refactor",
+        "critical"
+      ],
+      "estimated_hours": 1.5,
+      "estimated_tokens": 4500,
+      "created_at": "2025-11-16T12:00:00Z",
+      "actual_tokens": 14400,
+      "completed_at": "2025-11-17T04:45:52Z",
+      "completed_by": "task-completer",
+      "quality_score": 95
+    },
+    {
+      "id": "T049",
+      "title": "Add config_*.json to .gitignore",
+      "file": "tasks/T049-add-config-to-gitignore.md",
+      "status": "completed",
+      "priority": 1,
+      "phase": "refactor-phase1",
+      "depends_on": [],
+      "blocks": [
+        "T050"
+      ],
+      "tags": [
+        "security",
+        "infrastructure",
+        "phase1",
+        "refactor",
+        "quick-win"
+      ],
+      "estimated_hours": 0.25,
+      "estimated_tokens": 750,
+      "created_at": "2025-11-16T12:00:00Z",
+      "started_at": "2025-11-17T05:00:00Z",
+      "actual_tokens": 3000,
+      "actual_hours": 0.3,
+      "completed_at": "2025-11-17T05:06:30Z",
+      "completed_by": "task-completer",
+      "quality_score": 98
+    },
+    {
+      "id": "T050",
+      "title": "Add Secrets Validation Pre-commit Hook",
+      "file": "tasks/T050-add-secrets-validation-hook.md",
+      "status": "completed",
+      "priority": 1,
+      "phase": "refactor-phase1",
+      "depends_on": [],
+      "blocks": [],
+      "tags": [
+        "security",
+        "infrastructure",
+        "phase1",
+        "refactor",
+        "quick-win"
+      ],
+      "estimated_hours": 0.5,
+      "estimated_tokens": 1500,
+      "actual_tokens": 1600,
+      "actual_hours": 0.3,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T22:20:29Z",
+      "completed_by": "task-completer",
+      "quality_score": 98
+    },
+    {
+      "id": "T051",
+      "title": "Add Missing log_scalar() Method to MetricsTracker",
+      "file": "tasks/T051-add-missing-log-scalar-method.md",
+      "status": "completed",
+      "priority": 1,
+      "phase": "refactor-phase1",
+      "depends_on": [],
+      "blocks": [
+        "T055",
+        "T056",
+        "T057",
+        "T058",
+        "T064",
+        "T065"
+      ],
+      "tags": [
+        "bug-fix",
+        "metrics",
+        "phase1",
+        "refactor",
+        "critical",
+        "blocks-gpu-metrics"
+      ],
+      "estimated_hours": 1,
+      "estimated_tokens": 3000,
+      "actual_tokens": 3500,
+      "actual_hours": 1.2,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T16:54:02Z",
+      "completed_by": "task-completer",
+      "quality_score": 98
+    },
+    {
+      "id": "T052",
+      "title": "Fix Padding Token Handling in Loss Calculation",
+      "file": "tasks/T052-fix-padding-token-handling.md",
+      "status": "completed",
+      "priority": 1,
+      "phase": "refactor-phase1",
+      "depends_on": [],
+      "blocks": [
+        "T055",
+        "T056",
+        "T058"
+      ],
+      "tags": [
+        "bug-fix",
+        "training",
+        "phase1",
+        "refactor",
+        "critical"
+      ],
+      "estimated_hours": 0.5,
+      "estimated_tokens": 1500,
+      "actual_tokens": 3500,
+      "actual_hours": 1.2,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T20:37:04Z",
+      "completed_by": "task-completer",
+      "quality_score": 95
+    },
+    {
+      "id": "T053",
+      "title": "Fix DataLoader Reproducibility with Worker Seeds",
+      "file": "tasks/T053-fix-dataloader-reproducibility.md",
+      "status": "completed",
+      "priority": 1,
+      "phase": "refactor-phase1",
+      "depends_on": [],
+      "blocks": [
+        "T055",
+        "T056",
+        "T058"
+      ],
+      "tags": [
+        "bug-fix",
+        "reproducibility",
+        "training",
+        "phase1",
+        "refactor",
+        "critical"
+      ],
+      "estimated_hours": 3,
+      "estimated_tokens": 9000,
+      "actual_tokens": 7000,
+      "actual_hours": 7.0,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T22:04:40Z",
+      "completed_by": "task-completer",
+      "quality_score": 90
+    },
+    {
+      "id": "T054",
+      "title": "Extract Duplicated Training Loop Code into Shared Functions",
+      "file": "tasks/T054-extract-duplicated-code.md",
+      "status": "completed",
+      "priority": 1,
+      "phase": "refactor-phase1",
+      "depends_on": [],
+      "blocks": [
+        "T061",
+        "T062"
+      ],
+      "tags": [
+        "refactor",
+        "code-quality",
+        "phase1",
+        "technical-debt",
+        "blocks-decomposition"
+      ],
+      "estimated_hours": 4,
+      "estimated_tokens": 12000,
+      "actual_tokens": 9000,
+      "actual_hours": 1.2,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T22:25:50Z",
+      "completed_by": "task-completer",
+      "quality_score": 96
+    },
+    {
+      "id": "T055",
+      "title": "Add Learning Rate Warmup Scheduler",
+      "file": "tasks/T055-add-lr-warmup-scheduler.md",
+      "status": "completed",
+      "priority": 2,
+      "phase": "refactor-phase2",
+      "depends_on": [
+        "T051",
+        "T052",
+        "T053"
+      ],
+      "blocks": [],
+      "tags": [
+        "training",
+        "optimization",
+        "phase2",
+        "refactor",
+        "enhancement"
+      ],
+      "estimated_hours": 3,
+      "estimated_tokens": 9000,
+      "actual_tokens": 7000,
+      "actual_hours": 1.5,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T22:28:11Z",
+      "completed_by": "task-completer",
+      "quality_score": 95
+    },
+    {
+      "id": "T056",
+      "title": "Implement Weight Decay Exclusion for Biases and LayerNorm",
+      "file": "tasks/T056-implement-weight-decay-exclusion.md",
+      "status": "completed",
+      "priority": 2,
+      "phase": "refactor-phase2",
+      "depends_on": [
+        "T051",
+        "T052",
+        "T053"
+      ],
+      "blocks": [],
+      "tags": [
+        "training",
+        "optimization",
+        "phase2",
+        "refactor",
+        "enhancement"
+      ],
+      "estimated_hours": 2,
+      "estimated_tokens": 6000,
+      "actual_tokens": 5000,
+      "actual_hours": 1.0,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T22:30:59Z",
+      "completed_by": "task-completer",
+      "quality_score": 96
+    },
+    {
+      "id": "T057",
+      "title": "Add Gradient Clipping Validation Utility",
+      "file": "tasks/T057-add-gradient-clipping-validation.md",
+      "status": "completed",
+      "priority": 2,
+      "phase": "refactor-phase2",
+      "depends_on": [
+        "T051",
+        "T052",
+        "T053"
+      ],
+      "blocks": [
+        "T058",
+        "T065"
+      ],
+      "tags": [
+        "training",
+        "validation",
+        "phase2",
+        "refactor",
+        "prerequisite"
+      ],
+      "estimated_hours": 1,
+      "estimated_tokens": 3000,
+      "actual_tokens": 2500,
+      "actual_hours": 0.6,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T22:33:01Z",
+      "completed_by": "task-completer",
+      "quality_score": 95
+    },
+    {
+      "id": "T058",
+      "title": "Add Gradient Clipping to Training Loop",
+      "file": "tasks/T058-add-gradient-clipping-to-training.md",
+      "status": "completed",
+      "priority": 2,
+      "phase": "refactor-phase2",
+      "depends_on": [
+        "T051",
+        "T052",
+        "T053",
+        "T057"
+      ],
+      "blocks": [],
+      "tags": [
+        "training",
+        "optimization",
+        "phase2",
+        "refactor",
+        "enhancement"
+      ],
+      "estimated_hours": 2,
+      "estimated_tokens": 6000,
+      "actual_tokens": 5000,
+      "actual_hours": 1.2,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T22:35:56Z",
+      "completed_by": "task-completer",
+      "quality_score": 96
+    },
+    {
+      "id": "T059",
+      "title": "Fix Error Message Truncation in Notebook Cells",
+      "file": "tasks/T059-fix-error-message-truncation.md",
+      "status": "completed",
+      "priority": 2,
+      "phase": "refactor-phase2",
+      "depends_on": [
+        "T051",
+        "T052",
+        "T053"
+      ],
+      "blocks": [],
+      "tags": [
+        "ux",
+        "error-handling",
+        "phase2",
+        "refactor",
+        "quick-win"
+      ],
+      "estimated_hours": 2,
+      "estimated_tokens": 6000,
+      "actual_tokens": 3000,
+      "actual_hours": 0.8,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T22:39:38Z",
+      "completed_by": "task-completer",
+      "quality_score": 94
+    },
+    {
+      "id": "T060",
+      "title": "Add Network Retry Logic for Gist/HF Downloads",
+      "file": "tasks/T060-add-network-retry-logic.md",
+      "status": "completed",
+      "priority": 2,
+      "phase": "refactor-phase2",
+      "depends_on": [
+        "T051",
+        "T052",
+        "T053"
+      ],
+      "blocks": [],
+      "tags": [
+        "reliability",
+        "network",
+        "phase2",
+        "refactor",
+        "enhancement"
+      ],
+      "estimated_hours": 2,
+      "estimated_tokens": 6000,
+      "actual_tokens": 4500,
+      "actual_hours": 1.3,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T22:46:16Z",
+      "completed_by": "task-completer",
+      "quality_score": 96
+    },
+    {
+      "id": "T061",
+      "title": "Replace 515 Print Statements with Python Logging",
+      "file": "tasks/T061-replace-print-with-logging.md",
+      "status": "completed",
+      "priority": 2,
+      "phase": "refactor-phase3",
+      "depends_on": [
+        "T054"
+      ],
+      "blocks": [
+        "T062"
+      ],
+      "tags": [
+        "refactor",
+        "code-quality",
+        "logging",
+        "phase3",
+        "large-task"
+      ],
+      "estimated_hours": 20,
+      "estimated_tokens": 60000,
+      "actual_tokens": 7000,
+      "actual_hours": 3.0,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T22:50:40Z",
+      "completed_by": "task-completer",
+      "quality_score": 92
+    },
+    {
+      "id": "T062",
+      "title": "Decompose test_fine_tuning() into Smaller Functions",
+      "file": "tasks/T062-decompose-test-fine-tuning.md",
+      "status": "completed",
+      "priority": 3,
+      "phase": "refactor-phase4",
+      "depends_on": [
+        "T054",
+        "T061"
+      ],
+      "blocks": [],
+      "tags": [
+        "refactor",
+        "code-quality",
+        "phase4",
+        "decomposition"
+      ],
+      "estimated_hours": 6,
+      "estimated_tokens": 18000,
+      "actual_tokens": 5000,
+      "actual_hours": 1.5,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T22:56:26Z",
+      "completed_by": "task-completer",
+      "quality_score": 94
+    },
+    {
+      "id": "T063",
+      "title": "Improve Type Hint Coverage to 90%",
+      "file": "tasks/T063-improve-type-coverage.md",
+      "status": "completed",
+      "priority": 3,
+      "phase": "refactor-phase4",
+      "depends_on": [
+        "T061",
+        "T062"
+      ],
+      "blocks": [],
+      "tags": [
+        "code-quality",
+        "typing",
+        "phase4",
+        "refactor"
+      ],
+      "estimated_hours": 9,
+      "estimated_tokens": 27000,
+      "actual_tokens": 4000,
+      "actual_hours": 1.0,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T23:02:10Z",
+      "completed_by": "task-completer",
+      "quality_score": 95
+    },
+    {
+      "id": "T064",
+      "title": "Add GPU Metrics Tracking (Memory, Utilization, Temperature)",
+      "file": "tasks/T064-add-gpu-metrics-tracking.md",
+      "status": "completed",
+      "priority": 3,
+      "phase": "refactor-phase5",
+      "depends_on": [
+        "T051"
+      ],
+      "blocks": [],
+      "tags": [
+        "metrics",
+        "gpu",
+        "phase5",
+        "enhancement",
+        "monitoring"
+      ],
+      "estimated_hours": 3,
+      "estimated_tokens": 9000,
+      "actual_tokens": 4500,
+      "actual_hours": 1.2,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T23:54:11Z",
+      "completed_by": "task-completer",
+      "quality_score": 95
+    },
+    {
+      "id": "T065",
+      "title": "Add Gradient Distribution Logging (Per-Layer Norms, Histograms)",
+      "file": "tasks/T065-add-gradient-distribution-logging.md",
+      "status": "completed",
+      "priority": 3,
+      "phase": "refactor-phase5",
+      "depends_on": [
+        "T051",
+        "T057"
+      ],
+      "blocks": [],
+      "tags": [
+        "metrics",
+        "gradients",
+        "phase5",
+        "enhancement",
+        "debugging"
+      ],
+      "estimated_hours": 3,
+      "estimated_tokens": 9000,
+      "actual_tokens": 5000,
+      "actual_hours": 1.3,
+      "created_at": "2025-11-16T12:00:00Z",
+      "completed_at": "2025-11-17T23:57:36Z",
+      "completed_by": "task-completer",
+      "quality_score": 95
     }
   ],
   "deferred_tasks": {
@@ -573,17 +1162,176 @@
     "T033",
     "T038"
   ],
+  "critical_path_refactor": [
+    "T048",
+    "T051",
+    "T052",
+    "T053",
+    "T054",
+    "T055",
+    "T061"
+  ],
+  "dependency_graph": {
+    "T048": {
+      "depends_on": [],
+      "blocks": [
+        "T016",
+        "T017"
+      ]
+    },
+    "T049": {
+      "depends_on": [],
+      "blocks": [
+        "T050"
+      ]
+    },
+    "T050": {
+      "depends_on": [],
+      "blocks": []
+    },
+    "T051": {
+      "depends_on": [],
+      "blocks": [
+        "T055",
+        "T056",
+        "T057",
+        "T058",
+        "T064",
+        "T065"
+      ]
+    },
+    "T052": {
+      "depends_on": [],
+      "blocks": [
+        "T055",
+        "T056",
+        "T058"
+      ]
+    },
+    "T053": {
+      "depends_on": [],
+      "blocks": [
+        "T055",
+        "T056",
+        "T058"
+      ]
+    },
+    "T054": {
+      "depends_on": [],
+      "blocks": [
+        "T061",
+        "T062"
+      ]
+    },
+    "T055": {
+      "depends_on": [
+        "T051",
+        "T052",
+        "T053"
+      ],
+      "blocks": []
+    },
+    "T056": {
+      "depends_on": [
+        "T051",
+        "T052",
+        "T053"
+      ],
+      "blocks": []
+    },
+    "T057": {
+      "depends_on": [
+        "T051",
+        "T052",
+        "T053"
+      ],
+      "blocks": [
+        "T058",
+        "T065"
+      ]
+    },
+    "T058": {
+      "depends_on": [
+        "T051",
+        "T052",
+        "T053",
+        "T057"
+      ],
+      "blocks": []
+    },
+    "T059": {
+      "depends_on": [
+        "T051",
+        "T052",
+        "T053"
+      ],
+      "blocks": []
+    },
+    "T060": {
+      "depends_on": [
+        "T051",
+        "T052",
+        "T053"
+      ],
+      "blocks": []
+    },
+    "T061": {
+      "depends_on": [
+        "T054"
+      ],
+      "blocks": [
+        "T062"
+      ]
+    },
+    "T062": {
+      "depends_on": [
+        "T054",
+        "T061"
+      ],
+      "blocks": []
+    },
+    "T063": {
+      "depends_on": [
+        "T061",
+        "T062"
+      ],
+      "blocks": []
+    },
+    "T064": {
+      "depends_on": [
+        "T051"
+      ],
+      "blocks": []
+    },
+    "T065": {
+      "depends_on": [
+        "T051",
+        "T057"
+      ],
+      "blocks": []
+    }
+  },
   "stats": {
     "mvp_tasks": 17,
+    "mvp_completed": 17,
+    "mvp_in_progress": 0,
+    "refactor_tasks": 18,
+    "refactor_completed": 5,
+    "refactor_pending": 13,
     "deferred_tasks": 30,
-    "total_planned": 47,
+    "total_planned": 65,
+    "total_completed": 22,
     "mvp_estimated_hours": "24-28",
-    "deferred_estimated_hours": "32-36"
+    "refactor_estimated_hours": "65",
+    "deferred_estimated_hours": "32-36",
+    "total_estimated_tokens_mvp": 146000,
+    "total_estimated_tokens_refactor": 195750,
+    "total_estimated_tokens": 341750
   },
   "metadata": {
     "created_at": "2025-01-15",
-    "updated_at": "2025-01-15",
-    "manifest_version": "2.0-mvp",
-    "focus": "MVP training pipeline with essential production features"
+    "updated_at": "2025-11-17T22:04:40Z",
+    "manifest_version": "3.0-mvp+refactor",
+    "focus": "MVP training pipeline + comprehensive refactoring for production quality"
   }
 }

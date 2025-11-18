@@ -365,7 +365,7 @@ class TestConfigSaveLoad:
         """
         Test: Load from invalid JSON raises appropriate error
         Why: Handle manual edits gracefully
-        Contract: JSONDecodeError or ValueError with helpful message
+        Contract: ValueError with helpful message about JSON corruption
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create corrupted JSON file
@@ -373,8 +373,8 @@ class TestConfigSaveLoad:
             with open(corrupted_path, 'w') as f:
                 f.write("{ invalid json content }")
 
-            # Attempt to load
-            with pytest.raises(json.JSONDecodeError):
+            # Attempt to load - should raise ValueError with JSON error details
+            with pytest.raises(ValueError, match="Invalid JSON"):
                 TrainingConfig.load(corrupted_path)
 
 

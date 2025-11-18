@@ -1,0 +1,42 @@
+# Transformer Builder - Training Notebook Requirements
+# EXACT VERSION PINS for reproducible training experiments
+# Last Updated: 2025-11-16
+# Python: >=3.10,<3.13
+
+# ==============================================================================
+# PURPOSE: training.ipynb only (Tier 3 Training Utilities)
+# ==============================================================================
+# This file is for:
+# - training.ipynb notebook (installs in fresh Colab runtime)
+# - Reproducible fine-tuning experiments
+# - Hyperparameter search with Optuna
+# - Metrics tracking with W&B
+#
+# Installation in training.ipynb:
+#   !pip install -r requirements-training.txt
+#
+# DO NOT use this file in:
+# - template.ipynb (uses zero-installation strategy)
+# ==============================================================================
+
+# Training Framework
+pytorch-lightning==2.5.6
+torchmetrics==1.8.2
+
+# Hyperparameter Optimization
+optuna==4.6.0
+
+# Experiment Tracking
+wandb==0.23.0
+
+# ==============================================================================
+# COLAB PRE-INSTALLED (DO NOT REINSTALL - managed by Colab)
+# ==============================================================================
+# The following are already available in Colab runtime and will NOT be installed:
+# - torch 2.9+
+# - numpy 2.3+
+# - pandas 2.3+
+# - transformers 4.57+
+# - matplotlib, seaborn, scipy
+# - jupyter, ipykernel
+# ==============================================================================
