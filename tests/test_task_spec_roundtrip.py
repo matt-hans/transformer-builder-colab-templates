@@ -36,3 +36,38 @@ def test_load_task_spec_from_dict_alias():
     assert spec.name == "cls_custom"
     assert spec.additional_config.get("num_classes") == 3
 
+
+def test_task_spec_vision_modality_fields():
+    vision_spec = TaskSpec(
+        name="vision_tiny",
+        task_type="vision_classification",
+        model_family="encoder_only",
+        input_fields=["pixel_values"],
+        target_field="labels",
+        loss_type="cross_entropy",
+        metrics=["loss", "accuracy"],
+        modality="vision",
+        input_schema={"image_size": [3, 32, 32], "channels_first": True},
+        output_schema={"num_classes": 10},
+        preprocessing_config={"normalize": True},
+    )
+
+    assert vision_spec.is_vision()
+    assert not vision_spec.is_text()
+    assert vision_spec.modality == "vision"
+    assert vision_spec.input_schema["image_size"] == [3, 32, 32]
+    assert vision_spec.output_schema["num_classes"] == 10
+    # get_input_shape should surface the image_size
+    assert vision_spec.get_input_shape() == [3, 32, 32]
+
+
+def test_task_spec_text_defaults_backward_compatible():
+    # Existing text tasks should default to modality="text" and expose a basic input schema
+    presets = get_default_task_specs()
+    lm_spec = presets["lm_tiny"]
+
+    assert lm_spec.is_text()
+    assert lm_spec.modality == "text"
+    # Ensure input_schema is present and contains max_seq_len
+    assert "max_seq_len" in lm_spec.input_schema
+    assert isinstance(lm_spec.input_schema["max_seq_len"], int)

@@ -11,11 +11,15 @@ This module provides two layers of abstraction:
 """
 
 import inspect
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict, List, Optional, Set, Tuple
-from abc import ABC, abstractmethod
+
+if TYPE_CHECKING:
+    from utils.training.task_spec import TaskSpec
 
 # Optional dependency - only needed for Tier 3 (UniversalModelAdapter)
 try:
@@ -249,6 +253,29 @@ def _extract_logits_generic(output: Any) -> torch.Tensor:
     return output
 
 
+def get_adapter_for_task(task: "TaskSpec") -> ModelAdapter:
+    """
+    Factory helper to select a task-aware ModelAdapter based on TaskSpec.
+
+    This keeps adapter selection logic centralized so that new modalities
+    (e.g. vision) can plug into existing training/eval workflows without
+    changing call sites.
+    """
+    task_type = getattr(task, "task_type", None)
+    modality = getattr(task, "modality", "text")
+
+    if task_type == "lm":
+        return DecoderOnlyLMAdapter()
+    if task_type == "classification" or task_type == "text_classification":
+        return EncoderOnlyClassificationAdapter()
+    if task_type == "seq2seq":
+        return EncoderDecoderSeq2SeqAdapter()
+    if task_type == "vision_classification" and modality == "vision":
+        return VisionClassificationAdapter()
+
+    raise ValueError(f"Unsupported task_type/modality combination: task_type={task_type}, modality={modality}")
+
+
 class DecoderOnlyLMAdapter(ModelAdapter):
     """Adapter for decoder-only language models (LM)."""
 
@@ -370,6 +397,92 @@ class EncoderOnlyClassificationAdapter(ModelAdapter):
         return outputs.get('logits')
 
     def predict(self, outputs: Dict[str, Any], task: "TaskSpec"):
+        logits = self.get_logits(outputs, task)
+        return logits.argmax(dim=-1)
+
+
+class VisionClassificationAdapter(ModelAdapter):
+    """
+    Adapter for vision classification models.
+
+    Expects batches with:
+        - pixel_values: Tensor of shape [batch_size, channels, height, width]
+        - labels: LongTensor of shape [batch_size]
+    """
+
+    task_type: str = "vision_classification"
+
+    def prepare_inputs(self, batch: Dict[str, Any], task: "TaskSpec") -> Dict[str, Any]:
+        """
+        Prepare inputs for vision classification models.
+
+        Args:
+            batch: Dictionary containing at least 'pixel_values', optionally 'labels'.
+            task: TaskSpec describing the task (unused here but kept for symmetry).
+
+        Returns:
+            Dictionary with keys:
+                - 'pixel_values'
+                - 'labels' (if present in the input batch)
+        """
+        if "pixel_values" not in batch:
+            raise KeyError(f"Expected 'pixel_values' in batch, found: {list(batch.keys())}")
+
+        prepared: Dict[str, Any] = {"pixel_values": batch["pixel_values"]}
+        if "labels" in batch:
+            prepared["labels"] = batch["labels"]
+        return prepared
+
+    def forward_for_loss(
+        self,
+        model: Any,
+        batch: Dict[str, Any],
+        task: "TaskSpec",
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """
+        Run forward pass and compute loss for vision classification.
+
+        Args:
+            model: Vision model expecting [B, C, H, W] input.
+            batch: Prepared batch with 'pixel_values' and optional 'labels'.
+            task: TaskSpec describing the task (may carry num_classes in output_schema/additional_config).
+
+        Returns:
+            Tuple of (loss, outputs_dict) where:
+                - loss is a scalar tensor or None if labels are missing
+                - outputs_dict contains 'logits' with shape [B, num_classes]
+        """
+        pixel_values = batch["pixel_values"]
+        labels = batch.get("labels")
+
+        logits = model(pixel_values)
+        logits = _extract_logits_generic(logits)
+        outputs: Dict[str, Any] = {"logits": logits}
+
+        loss = None
+        if labels is not None:
+            loss = F.cross_entropy(logits, labels.long())
+
+        return loss, outputs
+
+    def get_logits(self, outputs: Dict[str, Any], task: "TaskSpec") -> torch.Tensor:
+        """Extract logits tensor from adapter outputs."""
+        logits = outputs.get("logits")
+        if logits is None:
+            raise KeyError("Expected 'logits' key in outputs for VisionClassificationAdapter.")
+        return logits
+
+    def predict(self, outputs: Dict[str, Any], task: "TaskSpec") -> torch.Tensor:
+        """
+        Compute hard predictions (argmax over class dimension).
+
+        Args:
+            outputs: Adapter outputs containing 'logits'.
+            task: TaskSpec describing the task.
+
+        Returns:
+            LongTensor of shape [batch_size] with predicted class indices.
+        """
         logits = self.get_logits(outputs, task)
         return logits.argmax(dim=-1)
 

@@ -7,21 +7,66 @@ and logs them to a metrics tracker when provided.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 import torch
 from torch.utils.data import DataLoader
 
 from .metrics_utils import calculate_perplexity
 
 
-def _compute_metrics(task_type: str, loss_sum: float, count: int, correct: int = 0) -> Dict[str, float]:
+def _compute_text_metrics(task_type: str, loss_sum: float, count: int, correct: int = 0) -> Dict[str, float]:
+    """
+    Compute aggregate metrics for text tasks.
+
+    Args:
+        task_type: High-level task type ("lm" or "classification").
+        loss_sum: Sum of loss values over all batches.
+        count: Number of batches.
+        correct: Number of correct predictions (only for classification).
+
+    Returns:
+        Dictionary containing averaged loss and task-specific metrics.
+    """
     avg_loss = loss_sum / max(1, count)
-    metrics = {"loss": float(avg_loss)}
+    metrics: Dict[str, float] = {"loss": float(avg_loss)}
     if task_type == "lm":
         metrics["perplexity"] = float(calculate_perplexity(avg_loss))
     if task_type == "classification":
         metrics["accuracy"] = float(correct / max(1, count))
     return metrics
+
+
+def _compute_vision_metrics(
+    loss_sum: float,
+    example_count: int,
+    top1_correct: int,
+    top3_correct: int,
+    top5_correct: int,
+) -> Dict[str, float]:
+    """
+    Compute aggregate metrics for vision classification tasks.
+
+    Metrics are aggregated globally across all examples rather than as an
+    average of per-batch accuracies.
+
+    Args:
+        loss_sum: Sum of loss values over all batches.
+        example_count: Total number of evaluated examples.
+        top1_correct: Number of examples with correct top-1 prediction.
+        top3_correct: Number of examples with correct prediction in top-3.
+        top5_correct: Number of examples with correct prediction in top-5.
+
+    Returns:
+        Dictionary with loss, accuracy, top-3 accuracy and top-5 accuracy.
+    """
+    denom = max(1, example_count)
+    avg_loss = loss_sum / max(1, denom)
+    return {
+        "loss": float(avg_loss),
+        "accuracy": float(top1_correct / denom),
+        "top3_accuracy": float(top3_correct / denom),
+        "top5_accuracy": float(top5_correct / denom),
+    }
 
 
 @torch.no_grad()
@@ -100,4 +145,3 @@ def run_evaluation(
                 pass
 
     return summary
-

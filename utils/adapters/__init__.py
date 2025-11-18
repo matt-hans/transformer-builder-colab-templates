@@ -1,11 +1,11 @@
 """
-Model adapters for handling arbitrary transformer architectures.
+Model adapters for handling arbitrary transformer and vision architectures.
 
 This module provides tools to wrap generated models with complex signatures
-into a unified interface compatible with PyTorch Lightning.
+into a unified interface compatible with PyTorch Lightning, as well as a
+family of lightweight task-aware adapters used by the training/eval stack.
 """
 
-# Tasks 1.3, 1.4, 2.1 complete
 from .model_adapter import (
     ModelSignatureInspector,
     ComputationalGraphExecutor,
@@ -14,6 +14,7 @@ from .model_adapter import (
     DecoderOnlyLMAdapter,
     EncoderOnlyClassificationAdapter,
     EncoderDecoderSeq2SeqAdapter,
+    VisionClassificationAdapter,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     'DecoderOnlyLMAdapter',
     'EncoderOnlyClassificationAdapter',
     'EncoderDecoderSeq2SeqAdapter',
+    'VisionClassificationAdapter',
 ]
