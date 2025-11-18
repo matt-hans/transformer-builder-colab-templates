@@ -13,12 +13,16 @@ Includes validation, optimization, and benchmarking.
 import os
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple, List, Union, Literal
+from typing import Optional, Dict, Any, Tuple, List, Union, Literal, Mapping, TYPE_CHECKING
 import json
 from datetime import datetime
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+
+if TYPE_CHECKING:
+    from .task_spec import TaskSpec
+    from ..adapters.model_adapter import ModelAdapter
 
 
 class ONNXExporter:

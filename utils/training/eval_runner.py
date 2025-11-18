@@ -98,8 +98,14 @@ def run_evaluation(
     model.eval()
 
     loss_sum = 0.0
-    count = 0
+    batch_count = 0
     correct_sum = 0
+
+    # Vision-specific aggregation
+    vision_top1_correct = 0
+    vision_top3_correct = 0
+    vision_top5_correct = 0
+    vision_example_count = 0
 
     for batch in dataloader:
         # Move to device
@@ -115,16 +121,16 @@ def run_evaluation(
             loss_val = loss.detach()
 
         loss_sum += float(loss_val.item())
-        count += 1
+        batch_count += 1
 
         # Optional accuracy for CLS or LM token-wise next-token accuracy
-        if task.task_type == "classification":
+        if getattr(task, "task_type", None) == "classification":
             logits = adapter.get_logits(outputs, task)
             preds = logits.argmax(dim=-1)
             labels = prepared.get("labels")
             if labels is not None:
                 correct_sum += int((preds == labels).sum().item())
-        elif task.task_type == "lm":
+        elif getattr(task, "task_type", None) == "lm":
             # Token-level next-token accuracy (rough estimate)
             logits = adapter.get_logits(outputs, task)
             labels = prepared.get("labels")
@@ -133,8 +139,49 @@ def run_evaluation(
                 shift_labels = labels[:, 1:]
                 preds = shift_logits.argmax(dim=-1)
                 correct_sum += int((preds == shift_labels).float().mean().item() > 0)  # count per batch
+        elif getattr(task, "modality", None) == "vision" and getattr(task, "task_type", None) == "vision_classification":
+            logits = adapter.get_logits(outputs, task)
+            labels = prepared.get("labels")
+            if labels is not None:
+                # Ensure [B, C]
+                if logits.dim() > 2:
+                    logits = logits.view(logits.size(0), -1)
+                _, num_classes = logits.shape
+                batch_size = int(labels.shape[0])
 
-    summary = _compute_metrics(task.task_type, loss_sum, count, correct_sum)
+                # Top-1
+                top1_pred = logits.argmax(dim=-1)
+                vision_top1_correct += int((top1_pred == labels).sum().item())
+
+                # Top-k
+                k3 = min(3, num_classes)
+                k5 = min(5, num_classes)
+
+                top3 = logits.topk(k3, dim=-1).indices
+                top5 = logits.topk(k5, dim=-1).indices
+
+                labels_expanded = labels.view(-1, 1)
+                vision_top3_correct += int((top3 == labels_expanded).any(dim=-1).sum().item())
+                vision_top5_correct += int((top5 == labels_expanded).any(dim=-1).sum().item())
+
+                vision_example_count += batch_size
+
+    # Final metrics routing
+    if getattr(task, "modality", None) == "vision" and getattr(task, "task_type", None) == "vision_classification":
+        summary = _compute_vision_metrics(
+            loss_sum=loss_sum,
+            example_count=vision_example_count,
+            top1_correct=vision_top1_correct,
+            top3_correct=vision_top3_correct,
+            top5_correct=vision_top5_correct,
+        )
+    else:
+        summary = _compute_text_metrics(
+            getattr(task, "task_type", ""),
+            loss_sum,
+            batch_count,
+            correct_sum,
+        )
 
     # Log to tracker if provided
     if metrics_tracker is not None:

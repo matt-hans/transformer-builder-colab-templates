@@ -56,3 +56,26 @@
 
 - The CLI reuses the same internal APIs as notebooks and supports loading `model.py` from a local path or a fetched gist.
 
+## How to Run Vision Tasks (Tier 1)
+
+Vision tasks use the same CLI entrypoint as text tasks, but with a different
+`task_name` and adapter/model wiring under the hood.
+
+1. Ensure you have a working Python environment with `torch` installed.
+2. Use the provided example config for the tiny vision preset:
+
+```bash
+python -m cli.run_tiers --config configs/example_tiers_vision.json
+```
+
+This will:
+
+- Build a `TrainingConfig` with `task_name="vision_tiny"`.
+- Construct a `TaskSpec` with `modality="vision"` and image schema
+  (e.g., `{"image_size": [3, 32, 32]}`).
+- Instantiate a `SimpleCNN` stub model and `VisionClassificationAdapter`.
+- Run Tier 1 shape robustness and gradient flow tests via `utils.test_functions`.
+
+You can copy `configs/example_tiers_vision.json` and adjust it for your own
+vision tasks (e.g., different `task_name` and `num_classes`) as long as the
+corresponding `TaskSpec` and dataset configuration are defined.
