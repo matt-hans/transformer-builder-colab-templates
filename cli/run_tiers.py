@@ -14,6 +14,9 @@ from utils.test_functions import (
     run_tier4_export_validation,
 )
 from utils.training import build_task_spec, TrainingConfig
+from utils.training.tier5_monitoring import run_tier5_monitoring
+from utils.training.eval_config import EvalConfig
+from utils.training.experiment_db import ExperimentDB
 from utils.training.export_utilities import export_model
 from utils.adapters import DecoderOnlyLMAdapter, VisionClassificationAdapter
 
@@ -181,6 +184,50 @@ def run_export_from_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def run_tier5_from_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Run Tier 5 monitoring (eval + optional baseline comparison + drift) from config.
+    """
+    tiers_cfg = TiersConfig.from_dict(cfg)
+    training_cfg = _build_training_config(tiers_cfg)
+    task = build_task_spec(training_cfg)
+
+    # Build EvalConfig from config overrides or defaults
+    eval_dict: Dict[str, Any] = {}
+    eval_cfg_raw = cfg.get("eval") or {}
+    eval_dict["dataset_id"] = eval_cfg_raw.get("dataset_id", f"{tiers_cfg.task_name}_v1")
+    eval_dict["split"] = eval_cfg_raw.get("split", "validation")
+    eval_dict["max_eval_examples"] = int(eval_cfg_raw.get("max_eval_examples", 32))
+    eval_dict["batch_size"] = int(eval_cfg_raw.get("batch_size", 4))
+    eval_dict["num_workers"] = int(eval_cfg_raw.get("num_workers", 0))
+    eval_dict["max_seq_length"] = int(eval_cfg_raw.get("max_seq_length", tiers_cfg.max_seq_len))
+    eval_dict["eval_interval_steps"] = int(eval_cfg_raw.get("eval_interval_steps", 0))
+    eval_dict["eval_on_start"] = bool(eval_cfg_raw.get("eval_on_start", True))
+    eval_cfg = EvalConfig.from_dict(eval_dict)
+    # Attach training config for downstream dataloader helpers
+    setattr(eval_cfg, "training_config", training_cfg)
+
+    model, adapter = _build_stub_model_and_adapter(tiers_cfg, task)
+
+    db_path = cfg.get("db_path", "experiments.db")
+    db = ExperimentDB(db_path)
+
+    baseline_run_id = cfg.get("baseline_run_id")
+    reference_profile_id = cfg.get("reference_profile_id")
+
+    tier5_results = run_tier5_monitoring(
+        model=model,
+        adapter=adapter,
+        task_spec=task,
+        eval_cfg=eval_cfg,
+        db=db,
+        baseline_run_id=int(baseline_run_id) if baseline_run_id is not None else None,
+        reference_profile_id=int(reference_profile_id) if reference_profile_id is not None else None,
+    )
+
+    return tier5_results
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Tier 1/2/4 tests for LM or vision tasks.")
     parser.add_argument("--config", required=False, help="Path to config JSON (optional)")
@@ -200,6 +247,8 @@ def main() -> None:
 
     if tier == "4" or mode == "EXPORT":
         out = run_export_from_config(cfg)
+    elif tier == "5":
+        out = run_tier5_from_config(cfg)
     else:
         out = run_tier1_from_config(cfg)
 

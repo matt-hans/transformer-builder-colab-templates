@@ -1,0 +1,19 @@
+{
+  "task_name": "lm_tiny",
+  "modality": "text",
+  "tier": "5",
+  "baseline_run_id": null,
+  "reference_profile_id": null,
+  "db_path": "experiments.db",
+  "eval": {
+    "dataset_id": "lm_tiny_v1",
+    "split": "validation",
+    "max_eval_examples": 32,
+    "batch_size": 4,
+    "num_workers": 0,
+    "max_seq_length": 16,
+    "eval_interval_steps": 0,
+    "eval_on_start": true
+  }
+}
+

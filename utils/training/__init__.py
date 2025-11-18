@@ -43,6 +43,7 @@ from .seed_manager import set_random_seed, seed_worker, create_seeded_generator
 from .training_config import TrainingConfig, compare_configs, build_task_spec, build_eval_config
 from .task_spec import TaskSpec, get_default_task_specs
 from .eval_config import EvalConfig
+from .regression_testing import compare_models as compare_models_regression
 
 __all__ = [
     # Dataset utilities
@@ -86,4 +87,5 @@ __all__ = [
     'TaskSpec',
     'EvalConfig',
     'get_default_task_specs',
+    'compare_models_regression',
 ]

@@ -61,9 +61,22 @@
 Distributed training options are exposed via `TrainingConfig` fields and the
 CLI JSON configs.
 
+### Strategies
+
+- **`auto`**:
+  - Default and safest option.
+  - Works on CPU, single-GPU, and multi-GPU nodes.
+  - Lets Lightning pick the right accelerator/strategy.
+- **`ddp`**:
+  - Data-parallel training across multiple GPUs on a node.
+  - Recommended for 2–8 GPUs when your model fits on a single device.
+- **`fsdp_native`**:
+  - Fully Sharded Data Parallel for very large models.
+  - Requires recent PyTorch/Lightning and high-memory GPUs (e.g., A100/H100).
+
 ### Config Fields
 
-- `strategy`: Lightning strategy string, e.g. `"auto"`, `"ddp"`, `"fsdp_native"`.
+- `strategy`: Lightning strategy string, as above.
 - `devices`: Number of devices (e.g. `2`), `"auto"` for all visible devices, or a list of device IDs.
 - `num_nodes`: Number of nodes (default `1`).
 - `accumulate_grad_batches`: Gradient accumulation steps; effective batch size is `batch_size * accumulate_grad_batches`.
@@ -97,6 +110,61 @@ python -m cli.run_training --config configs/example_train_ddp.json
 On single-GPU systems, Lightning will still run but effectively use a single
 device. If `pytorch_lightning` is not installed, the CLI falls back to the
 adapter-first stub training loop.
+
+### Resuming from a Checkpoint
+
+You can resume training from a Lightning checkpoint by specifying
+`resume_from_checkpoint` in your training config:
+
+```json
+{
+  "task_name": "lm_tiny",
+  "learning_rate": 5e-5,
+  "batch_size": 4,
+  "epochs": 5,
+  "strategy": "ddp",
+  "devices": "auto",
+  "resume_from_checkpoint": "training_output/checkpoints/cli-run/epoch=02-val_loss=0.1234.ckpt"
+}
+```
+
+The CLI will pass this to `TrainingCoordinator`, which in turn passes it to
+Lightning’s `Trainer.fit(..., ckpt_path=...)` so that model, optimizer, and
+RNG state are restored and training continues from the next epoch.
+
+### Hardware Notes & Safe Defaults
+
+- **Colab Free / Single-GPU**:
+  - Use `strategy="auto"`, `devices=1` or omit `devices` and let it default.
+  - Keep `precision="16-mixed"` or `"bf16-mixed"` if your GPU supports it.
+- **Local Multi-GPU Workstation (2–4 GPUs)**:
+  - Use `strategy="ddp"`, `devices=2`/`4` or `"auto"`.
+  - Start with `precision="bf16-mixed"` on Ampere+ GPUs, otherwise `"16-mixed"`.
+- **Very Large Models / FSDP**:
+  - Consider `strategy="fsdp_native"` only on capable hardware (A100/H100).
+  - Begin with small batch sizes and enable gradient accumulation.
+
+The coordinator includes guardrails:
+
+- If `strategy="ddp"` but only one device is effectively requested or visible,
+  it logs a warning and falls back to `strategy="auto"` (single-device).
+- If `strategy="fsdp_native"` is requested without a multi-GPU CUDA setup,
+  it logs a warning that training may fail and suggests `ddp`/`auto`.
+
+### Troubleshooting
+
+- **Error: "DDP requires multiple processes/devices"**
+  - Check that `devices` is >1 (or a list with length >1) and that
+    `torch.cuda.device_count() >= devices`.
+  - On Colab Free (single GPU), prefer `strategy="auto"` or `devices=1`.
+
+- **FSDP out-of-memory (OOM)**
+  - Reduce `batch_size` and increase `accumulate_grad_batches`.
+  - Consider `strategy="ddp"` if the model fits in a single-device memory.
+
+- **Training runs on CPU unexpectedly**
+  - Check `use_gpu=True` in your config or coordinator.
+  - Confirm that `torch.cuda.is_available()` returns `True` inside your env.
 
 ### Export Tier (Tier 4)
 
@@ -169,3 +237,59 @@ This will:
 You can copy `configs/example_tiers_vision.json` and adjust it for your own
 vision tasks (e.g., different `task_name` and `num_classes`) as long as the
 corresponding `TaskSpec` and dataset configuration are defined.
+
+## Tier 5 Monitoring & Drift
+
+Tier 5 combines three checks into a single command:
+
+- Evaluation of the current model on a held-out eval set
+- Optional baseline vs candidate comparison (regression testing)
+- Optional input/output drift analysis relative to a stored reference profile
+
+### CLI: Tier 5 Monitoring
+
+1. Use the example monitoring config:
+
+File: `configs/example_tiers_monitoring.json`
+
+```json
+{
+  "task_name": "lm_tiny",
+  "modality": "text",
+  "tier": "5",
+  "baseline_run_id": null,
+  "reference_profile_id": null,
+  "db_path": "experiments.db",
+  "eval": {
+    "dataset_id": "lm_tiny_v1",
+    "split": "validation",
+    "max_eval_examples": 32,
+    "batch_size": 4
+  }
+}
+```
+
+2. Run Tier 5 from the CLI:
+
+```bash
+python -m cli.run_tiers --config configs/example_tiers_monitoring.json --json
+```
+
+This will:
+
+- Build a `TrainingConfig` and `TaskSpec` for `task_name`
+- Instantiate a stub model (LMStub or SimpleCNN) plus adapter
+- Evaluate the model on the specified eval set
+- Optionally compare to a baseline run (if `baseline_run_id` is set)
+- Optionally compute drift metrics (if `reference_profile_id` points to a run with a stored profile)
+
+The JSON output contains:
+
+- `eval_metrics`: aggregated metrics for the candidate model
+- `comparison`: regression comparison (if baseline provided)
+- `drift`: drift analysis (if reference profile provided)
+- `status`: `"ok"`, `"warn"`, or `"fail"` for CI/CD gates
+
+### Using ExperimentDB Profiles
+
+To enable drift detection, first log a reference profile for a run using `log_profile_to_db` from `utils.training.drift_metrics`, then supply its `run_id` as `reference_profile_id` in the Tier 5 config.

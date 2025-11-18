@@ -84,6 +84,9 @@ class ExperimentDB:
         1. runs: Experiment run metadata
         2. metrics: Time-series metric values
         3. artifacts: File paths and metadata
+
+        Newer versions may also create additional tables (idempotently) to
+        support advanced monitoring and comparisons.
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -102,11 +105,14 @@ class ExperimentDB:
                 )
             ''')
 
-            # Metrics table (supports both epoch-level and step-level)
+            # Metrics table (supports both epoch-level and step-level).
+            # This table also serves as the canonical "run_metrics" storage
+            # for Tier-5 monitoring by including a split column.
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS metrics (
                     metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id INTEGER NOT NULL,
+                    split TEXT,
                     metric_name TEXT NOT NULL,
                     value REAL NOT NULL,
                     step INTEGER,
@@ -152,6 +158,39 @@ class ExperimentDB:
                     cursor.execute("ALTER TABLE runs ADD COLUMN gist_revision TEXT")
                 if 'gist_sha256' not in cols:
                     cursor.execute("ALTER TABLE runs ADD COLUMN gist_sha256 TEXT")
+
+                # Extend schema for artifact_paths and run metadata (Tier 5)
+                if 'artifact_paths' not in cols:
+                    cursor.execute("ALTER TABLE runs ADD COLUMN artifact_paths TEXT")
+                if 'task_name' not in cols:
+                    cursor.execute("ALTER TABLE runs ADD COLUMN task_name TEXT")
+                if 'modality' not in cols:
+                    cursor.execute("ALTER TABLE runs ADD COLUMN modality TEXT")
+                if 'strategy' not in cols:
+                    cursor.execute("ALTER TABLE runs ADD COLUMN strategy TEXT")
+                if 'devices' not in cols:
+                    cursor.execute("ALTER TABLE runs ADD COLUMN devices TEXT")
+                if 'updated_at' not in cols:
+                    cursor.execute("ALTER TABLE runs ADD COLUMN updated_at TIMESTAMP")
+
+                # Ensure metrics table has split column for per-split logging.
+                cursor.execute("PRAGMA table_info(metrics)")
+                metric_cols = {row[1] for row in cursor.fetchall()}
+                if 'split' not in metric_cols:
+                    cursor.execute("ALTER TABLE metrics ADD COLUMN split TEXT")
+
+                # Comparisons table (baseline vs candidate)
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS comparisons (
+                        comparison_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        baseline_run_id INTEGER,
+                        candidate_run_id INTEGER,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        notes TEXT,
+                        FOREIGN KEY (baseline_run_id) REFERENCES runs (run_id) ON DELETE CASCADE,
+                        FOREIGN KEY (candidate_run_id) REFERENCES runs (run_id) ON DELETE CASCADE
+                    )
+                ''')
                 conn.commit()
             except Exception:
                 pass
@@ -209,6 +248,70 @@ class ExperimentDB:
         logger.info(f"Created run {run_id}: '{run_name}'")
         return run_id
 
+    def register_run(self, run_info: Dict[str, Any]) -> int:
+        """
+        Register a new run with extended metadata.
+
+        Args:
+            run_info: Dictionary with keys:
+                - run_name (required)
+                - task_name, modality, strategy, devices, artifact_paths (optional)
+                - notes (optional)
+
+        Returns:
+            run_id: Integer ID of the created run.
+
+        This is a higher-level helper built on top of log_run and extended
+        columns added for monitoring/analysis.
+        """
+        run_name = run_info['run_name']
+        config = run_info.get('config', {})
+        notes = run_info.get('notes', '')
+
+        run_id = self.log_run(
+            run_name=run_name,
+            config=config,
+            notes=notes,
+            sweep_id=run_info.get('sweep_id'),
+            sweep_params=run_info.get('sweep_params'),
+            gist_id=run_info.get('gist_id'),
+            gist_revision=run_info.get('gist_revision'),
+            gist_sha256=run_info.get('gist_sha256'),
+        )
+
+        # Update extended metadata fields
+        artifact_paths = run_info.get('artifact_paths')
+        task_name = run_info.get('task_name')
+        modality = run_info.get('modality')
+        strategy = run_info.get('strategy')
+        devices = run_info.get('devices')
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                UPDATE runs
+                SET task_name = COALESCE(?, task_name),
+                    modality = COALESCE(?, modality),
+                    strategy = COALESCE(?, strategy),
+                    devices = COALESCE(?, devices),
+                    artifact_paths = COALESCE(?, artifact_paths),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE run_id = ?
+                ''',
+                (
+                    task_name,
+                    modality,
+                    strategy,
+                    devices,
+                    json.dumps(artifact_paths) if artifact_paths is not None else None,
+                    run_id,
+                ),
+            )
+            conn.commit()
+
+        return run_id
+
     def log_metric(
         self,
         run_id: int,
@@ -242,6 +345,37 @@ class ExperimentDB:
                 ''',
                 (run_id, metric_name, value, step, epoch)
             )
+            conn.commit()
+
+    def log_metrics(
+        self,
+        run_id: int,
+        metrics: Dict[str, float],
+        split: str,
+        step: Optional[int] = None,
+        epoch: Optional[int] = None,
+    ) -> None:
+        """
+        Log a batch of metrics for a given run and split.
+
+        Args:
+            run_id: Run ID from register_run/log_run.
+            metrics: Mapping from metric name to value.
+            split: Data split name ('train', 'val', 'test', etc.).
+            step: Optional global step number.
+            epoch: Optional epoch number.
+        """
+        timestamp = datetime.now().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            for metric_name, value in metrics.items():
+                cursor.execute(
+                    '''
+                    INSERT INTO metrics (run_id, split, metric_name, value, step, epoch, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''',
+                    (run_id, split, metric_name, float(value), step, epoch, timestamp),
+                )
             conn.commit()
 
     def log_artifact(
@@ -279,6 +413,75 @@ class ExperimentDB:
             conn.commit()
 
         logger.debug(f"Logged artifact: {artifact_type} -> {filepath_str}")
+
+    def get_artifacts(
+        self,
+        run_id: int,
+        artifact_type: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Retrieve artifacts for a run, optionally filtered by type.
+
+        Args:
+            run_id: Run ID to retrieve artifacts for.
+            artifact_type: Optional artifact type filter (e.g., 'checkpoint').
+
+        Returns:
+            DataFrame with columns: [artifact_id, run_id, artifact_type,
+            filepath, metadata, created_at].
+        """
+        query = '''
+            SELECT artifact_id, run_id, artifact_type, filepath, metadata, created_at
+            FROM artifacts
+            WHERE run_id = ?
+        '''
+        params: List[Union[int, str]] = [run_id]
+        if artifact_type is not None:
+            query += ' AND artifact_type = ?'
+            params.append(artifact_type)
+
+        query += ' ORDER BY created_at DESC, artifact_id DESC'
+
+        with sqlite3.connect(self.db_path) as conn:
+            df = pd.read_sql_query(query, conn, params=params)
+
+        return df
+
+    def create_comparison(
+        self,
+        baseline_run_id: int,
+        candidate_run_id: int,
+        notes: str | None = None,
+    ) -> int:
+        """
+        Create a baseline vs. candidate comparison entry.
+
+        Args:
+            baseline_run_id: Run ID of the baseline model.
+            candidate_run_id: Run ID of the candidate model.
+            notes: Optional notes describing the comparison.
+
+        Returns:
+            Newly created comparison_id.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                INSERT INTO comparisons (baseline_run_id, candidate_run_id, notes)
+                VALUES (?, ?, ?)
+                ''',
+                (baseline_run_id, candidate_run_id, notes),
+            )
+            comparison_id = cursor.lastrowid
+            conn.commit()
+
+        logger.info(
+            "Created comparison %d: baseline_run_id=%d, candidate_run_id=%d",
+            comparison_id,
+            baseline_run_id,
+            candidate_run_id,
+        )
+        return comparison_id
 
     def update_run_status(self, run_id: int, status: str) -> None:
         """Update run status.
@@ -377,6 +580,23 @@ class ExperimentDB:
             df = pd.read_sql_query(query, conn, params=params)
 
         return df
+
+    def get_run_metrics(
+        self,
+        run_id: int,
+        metric_name: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        Alias for get_metrics with optional metric_name filter.
+
+        Args:
+            run_id: Run ID.
+            metric_name: Optional metric name to filter on.
+
+        Returns:
+            DataFrame of metrics for the run.
+        """
+        return self.get_metrics(run_id, metric_name)
 
     def compare_runs(self, run_ids: List[int]) -> pd.DataFrame:
         """Compare metrics across multiple runs.

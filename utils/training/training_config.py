@@ -171,6 +171,9 @@ class TrainingConfig:
     # Optional dataset preset identifier for evaluation; if None, derived from task_name
     eval_dataset_id: Optional[str] = None
 
+    # Optional checkpoint to resume from (Lightning ckpt path)
+    resume_from_checkpoint: Optional[str] = None
+
     # Legacy dataset fields (kept for backwards compatibility and power users)
     dataset_name: str = "wikitext-103-v1"
     dataset_split: str = "train"

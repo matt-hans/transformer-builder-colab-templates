@@ -41,6 +41,9 @@ except Exception:
     AdaptiveTokenizerDataModule = None  # type: ignore
 from .checkpoint_manager import CheckpointManager
 from .dataset_utilities import DatasetLoader
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class TrainingCoordinator:
@@ -112,40 +115,43 @@ class TrainingCoordinator:
         self.devices = devices
         self.num_nodes = num_nodes
 
-        # Subdirectories
+        # Subdirectories (per-run checkpoints will live under this root)
         self.checkpoint_dir = self.output_dir / 'checkpoints'
         self.log_dir = self.output_dir / 'logs'
         self.checkpoint_dir.mkdir(exist_ok=True)
         self.log_dir.mkdir(exist_ok=True)
 
-    def train(self,
-              model: torch.nn.Module,
-              dataset: Optional[Union[str, Dataset]] = None,
-              dataset_path: Optional[str] = None,
-              config_name: Optional[str] = None,
-              val_dataset: Optional[Union[str, Dataset]] = None,
-              val_config_name: Optional[str] = None,
-              vocab_size: int = 50257,
-              batch_size: int = 16,
-              max_length: int = 512,
-              learning_rate: float = 1e-4,
-              max_epochs: int = 3,
-              val_split: float = 0.1,
-              accumulate_grad_batches: int = 1,
-              early_stopping_patience: Optional[int] = 5,
-              early_stopping_min_delta: float = 0.0,
-              save_top_k: int = 3,
-              save_every_n_epochs: int = 1,
-              num_workers: int = 2,
-              dataset_cache_dir: Optional[str] = None,
-              tokenizer: Optional[Any] = None,
-              datamodule: Optional[Any] = None,
-              resume_from_checkpoint: Optional[str] = None,
-              seed: int = 42,
-              deterministic: bool = False,
-              use_amp: Optional[bool] = None,
-              drive_backup: bool = False,
-              drive_base_dir: Optional[str] = None) -> Dict[str, Any]:
+    def train(
+        self,
+        model: torch.nn.Module,
+        dataset: Optional[Union[str, Dataset]] = None,
+        dataset_path: Optional[str] = None,
+        config_name: Optional[str] = None,
+        val_dataset: Optional[Union[str, Dataset]] = None,
+        val_config_name: Optional[str] = None,
+        vocab_size: int = 50257,
+        batch_size: int = 16,
+        max_length: int = 512,
+        learning_rate: float = 1e-4,
+        max_epochs: int = 3,
+        val_split: float = 0.1,
+        accumulate_grad_batches: int = 1,
+        early_stopping_patience: Optional[int] = 5,
+        early_stopping_min_delta: float = 0.0,
+        save_top_k: int = 3,
+        save_every_n_epochs: int = 1,
+        num_workers: int = 2,
+        dataset_cache_dir: Optional[str] = None,
+        tokenizer: Optional[Any] = None,
+        datamodule: Optional[Any] = None,
+        resume_from_checkpoint: Optional[str] = None,
+        seed: int = 42,
+        deterministic: bool = False,
+        use_amp: Optional[bool] = None,
+        drive_backup: bool = False,
+        drive_base_dir: Optional[str] = None,
+        run_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Train model end-to-end.
 
@@ -278,6 +284,11 @@ class TrainingCoordinator:
         print(f"  Learning rate: {learning_rate}")
         print(f"  Vocab size: {vocab_size}")
 
+        # Derive run-specific checkpoint directory
+        run_name_effective = run_name or "run_default"
+        run_checkpoint_dir = self.checkpoint_dir / run_name_effective
+        run_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
         # Step 5: Setup callbacks
         print("\n⚙️  Step 5: Configuring Training")
         print("-" * 80)
@@ -287,7 +298,7 @@ class TrainingCoordinator:
         # Checkpoint callback
         from datetime import datetime
         checkpoint_manager = CheckpointManager(
-            checkpoint_dir=str(self.checkpoint_dir),
+            checkpoint_dir=str(run_checkpoint_dir),
             save_top_k=save_top_k,
             monitor='val_loss',
             mode='min',
@@ -305,11 +316,13 @@ class TrainingCoordinator:
         # Best state_dict saver (saves best.pt on metric improvement)
         try:
             from .checkpoint_manager import BestStateDictCallback
-            callbacks.append(BestStateDictCallback(
-                checkpoint_dir=self.checkpoint_dir,
-                metric_name='val_loss',
-                mode='min'
-            ))
+            callbacks.append(
+                BestStateDictCallback(
+                    checkpoint_dir=run_checkpoint_dir,
+                    metric_name='val_loss',
+                    mode='min',
+                )
+            )
         except Exception:
             pass
 
@@ -387,6 +400,29 @@ class TrainingCoordinator:
             trainer_devices = self.devices
         else:
             trainer_devices = 'auto' if self.use_gpu else 1
+
+        # Distributed guardrails: warn and adjust clearly misconfigured setups
+        if isinstance(trainer_devices, int):
+            requested_devices = trainer_devices
+        elif isinstance(trainer_devices, (list, tuple)):
+            requested_devices = len(trainer_devices)
+        else:
+            # "auto" or other string → use CUDA device count as a proxy
+            requested_devices = torch.cuda.device_count() if torch.cuda.is_available() else 0
+
+        if self.strategy == 'ddp' and requested_devices <= 1:
+            logger.warning(
+                "DDP strategy requested but only %d device(s) available; "
+                "falling back to strategy='auto' for single-device training.",
+                requested_devices,
+            )
+            self.strategy = 'auto'
+
+        if self.strategy == 'fsdp_native' and (not torch.cuda.is_available() or requested_devices <= 1):
+            logger.warning(
+                "fsdp_native strategy requested but no multi-GPU CUDA setup detected; "
+                "training may fail. Consider using strategy='ddp' or 'auto' instead."
+            )
 
         trainer = pl.Trainer(
             max_epochs=max_epochs,

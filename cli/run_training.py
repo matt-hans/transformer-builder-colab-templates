@@ -1,14 +1,17 @@
 import argparse
 import json
+import re
+from pathlib import Path
+import importlib.util
+
+import torch
+import torch.nn as nn
+
 from utils.training import TrainingConfig, build_task_spec, build_eval_config
 from utils.training.training_core import run_training, TrainingCoordinator
 from utils.adapters import DecoderOnlyLMAdapter
 from utils.adapters.gist_loader import load_gist_model
 from utils.training.experiment_db import ExperimentDB
-from pathlib import Path
-import importlib.util
-import torch
-import torch.nn as nn
 
 
 class LMStub(nn.Module):
@@ -68,6 +71,7 @@ def run_from_config(cfg: dict) -> dict:
         accumulate_grad_batches=int(cfg.get('accumulate_grad_batches', 1)),
         precision=str(cfg.get('precision', "bf16-mixed")),
         gradient_accumulation_steps=int(cfg.get('gradient_accumulation_steps', cfg.get('accumulate_grad_batches', 1))),
+        resume_from_checkpoint=cfg.get('resume_from_checkpoint'),
     )
     if 'task_name' in cfg:
         cfg_obj.task_name = cfg['task_name']
@@ -113,6 +117,8 @@ def run_from_config(cfg: dict) -> dict:
             learning_rate=cfg_obj.learning_rate,
             max_epochs=cfg_obj.epochs,
             accumulate_grad_batches=cfg_obj.accumulate_grad_batches,
+            resume_from_checkpoint=cfg_obj.resume_from_checkpoint,
+            run_name=cfg_obj.run_name,
         )
     except ImportError:
         out = run_training(model, adapter, cfg_obj, task, eval_cfg)
@@ -129,6 +135,26 @@ def run_from_config(cfg: dict) -> dict:
             gist_revision=cfg.get('gist_revision'),
             gist_sha256=None,
         )
+        # Log best checkpoint artifact if available
+        best_path = out.get('best_model_path')
+        final_metrics = out.get('final_metrics', {})
+        if best_path is not None:
+            meta = {}
+            if isinstance(final_metrics, dict) and 'val_loss' in final_metrics:
+                try:
+                    meta['val_loss'] = float(final_metrics['val_loss'])
+                except Exception:
+                    pass
+            # Try to infer epoch number from checkpoint filename (e.g., epoch=02-...)
+            try:
+                fname = Path(str(best_path)).name
+                m = re.search(r'epoch[_=](\d+)', fname)
+                if m:
+                    meta['epoch'] = int(m.group(1))
+            except Exception:
+                pass
+
+            db.log_artifact(run_id, 'checkpoint', best_path, metadata=meta or None)
         db.update_run_status(run_id, 'completed')
         out['run_id'] = run_id
     return out

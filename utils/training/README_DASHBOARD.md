@@ -259,6 +259,28 @@ python examples/dashboard_demo.py
 - `examples/outputs/full_dashboard.pdf` - PDF export
 - `examples/outputs/full_dashboard.svg` - SVG export
 
+## Drift Metrics Quickstart (Tier 5 Preview)
+
+You can compute simple input/output drift profiles and store them in `ExperimentDB` for later monitoring:
+
+```python
+from utils.training.drift_metrics import compute_dataset_profile, compare_profiles, log_profile_to_db
+from utils.training.experiment_db import ExperimentDB
+
+# Assume you have a dataset and TaskSpec
+ref_profile = compute_dataset_profile(train_dataset, task_spec, sample_size=1000)
+new_profile = compute_dataset_profile(production_sample, task_spec, sample_size=1000)
+
+result = compare_profiles(ref_profile, new_profile)
+print(result["status"], result["drift_scores"])
+
+# Optional: log profile for the current run
+db = ExperimentDB("experiments.db")
+run_id = db.log_run("run-with-drift-profile", config_dict)
+log_profile_to_db(db, run_id, new_profile, profile_name="eval_dataset")
+```
+
+
 ## Error Handling
 
 ### Empty DataFrame
