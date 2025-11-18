@@ -16,6 +16,8 @@ import json
 import pandas as pd
 from pathlib import Path
 from typing import Optional, Union, List, Dict, Any, Literal
+import torch
+from torch.utils.data import Dataset as TorchDataset, DataLoader
 from datasets import Dataset, load_dataset, DatasetDict
 from tqdm.auto import tqdm
 import re
@@ -539,28 +541,175 @@ class DatasetUploader:
             print(f"❌ File too large ({file_size_mb:.1f} MB > {self.max_size_mb} MB)")
             return None
 
-        # Validate format
-        file_ext = Path(filename).suffix.lstrip('.').lower()
-        if file_ext not in ['txt', 'json', 'csv', 'jsonl']:
-            print(f"❌ Unsupported format: {file_ext}")
-            print("   Supported: TXT, JSON, CSV, JSONL")
-            return None
 
-        # Load dataset
-        loader = DatasetLoader(preprocessing=preprocessing)
-        try:
-            dataset = loader.load_local_file(
-                filename,
-                text_column=self.text_column
-            )
+# -----------------------------------------------------------------------------
+# Task-aware dataloader builder (Workstream C placeholder)
+# -----------------------------------------------------------------------------
 
-            # Show preview
-            if preview and len(dataset) > 0:
-                loader.preview_samples(dataset, num_samples=2, text_column=self.text_column)
-                loader.print_statistics(dataset, text_column=self.text_column)
+class _IntSeqDataset(TorchDataset):
+    def __init__(self, samples: List[List[int]], labels: Optional[List[int]] = None):
+        self.samples = samples
+        self.labels = labels
 
-            return dataset
+    def __len__(self):
+        return len(self.samples)
 
-        except Exception as e:
-            print(f"❌ Failed to load dataset: {e}")
-            return None
+    def __getitem__(self, idx):
+        x = torch.tensor(self.samples[idx], dtype=torch.long)
+        if self.labels is None:
+            return {"input_ids": x, "labels": x.clone()}
+        else:
+            return {"input_ids": x, "labels": torch.tensor(int(self.labels[idx]), dtype=torch.long)}
+
+
+def _char_to_ids(s: str, vocab_size: int, max_len: int) -> List[int]:
+    ids = [(ord(ch) % max(vocab_size, 2)) for ch in s]
+    if len(ids) >= max_len:
+        return ids[:max_len]
+    return ids + [0] * (max_len - len(ids))
+
+
+def _load_lm_tiny(path: Union[str, Path], vocab_size: int, max_len: int, limit: Optional[int]) -> _IntSeqDataset:
+    lines = []
+    with open(path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            # Map to ids deterministically
+            ids = _char_to_ids(line, vocab_size, max_len)
+            lines.append(ids)
+            if limit and len(lines) >= limit:
+                break
+    return _IntSeqDataset(lines, None)
+
+
+def _load_cls_tiny(path: Union[str, Path], vocab_size: int, max_len: int, limit: Optional[int]) -> _IntSeqDataset:
+    import csv
+    texts, labels = [], []
+    with open(path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            text = row.get('text', '')
+            label = int(row.get('label', 0))
+            ids = _char_to_ids(text, vocab_size, max_len)
+            texts.append(ids)
+            labels.append(label)
+            if limit and len(texts) >= limit:
+                break
+    return _IntSeqDataset(texts, labels)
+
+
+def _load_seq2seq_tiny(path: Union[str, Path], vocab_size: int, max_len: int, limit: Optional[int]) -> TorchDataset:
+    # Returns dict with input_ids, decoder_input_ids, labels
+    items = []
+    with open(path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            src = _char_to_ids(str(obj.get('input', '')), vocab_size, max_len)
+            tgt = _char_to_ids(str(obj.get('target', '')), vocab_size, max_len)
+            items.append({
+                'input_ids': torch.tensor(src, dtype=torch.long),
+                'decoder_input_ids': torch.tensor(tgt[:-1] + [0], dtype=torch.long),
+                'labels': torch.tensor(tgt, dtype=torch.long),
+            })
+            if limit and len(items) >= limit:
+                break
+
+    class _Seq2SeqDataset(TorchDataset):
+        def __len__(self):
+            return len(items)
+
+        def __getitem__(self, idx):
+            return items[idx]
+
+    return _Seq2SeqDataset()
+
+
+def _collate_lm(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+    input_ids = torch.stack([b['input_ids'] for b in batch])
+    attention_mask = (input_ids != 0).long()
+    labels = input_ids.clone()
+    return {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels}
+
+
+def _collate_cls(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+    input_ids = torch.stack([b['input_ids'] for b in batch])
+    attention_mask = (input_ids != 0).long()
+    labels = torch.stack([b['labels'] for b in batch]).long()
+    return {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels}
+
+
+def _collate_seq2seq(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+    input_ids = torch.stack([b['input_ids'] for b in batch])
+    attention_mask = (input_ids != 0).long()
+    decoder_input_ids = torch.stack([b['decoder_input_ids'] for b in batch])
+    labels = torch.stack([b['labels'] for b in batch])
+    return {
+        'input_ids': input_ids,
+        'attention_mask': attention_mask,
+        'decoder_input_ids': decoder_input_ids,
+        'labels': labels,
+    }
+
+
+def build_dataloader(task_spec, eval_config, training_config):
+    """
+    Build a task-aware DataLoader for eval.
+
+    Loads tiny example datasets when dataset_id matches known presets.
+    Falls back to synthetic mapping for unsupported cases.
+    """
+    base_dir = Path('examples/datasets')
+    vocab_size = getattr(training_config, 'vocab_size', 256)
+    max_len = getattr(eval_config, 'max_seq_length', getattr(training_config, 'max_seq_len', 128))
+    limit = getattr(eval_config, 'max_eval_examples', None)
+    batch_size = getattr(eval_config, 'batch_size', 4)
+
+    if task_spec.task_type == 'lm':
+        path = base_dir / 'lm_tiny.txt'
+        if path.exists():
+            dataset = _load_lm_tiny(path, vocab_size, max_len, limit)
+        else:
+            # Synthetic fallback
+            samples = [[(i + j) % vocab_size for j in range(max_len)] for i in range(limit or 16)]
+            dataset = _IntSeqDataset(samples, None)
+        return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0, collate_fn=_collate_lm)
+
+    if task_spec.task_type == 'classification':
+        path = base_dir / 'cls_tiny.csv'
+        if path.exists():
+            dataset = _load_cls_tiny(path, vocab_size, max_len, limit)
+        else:
+            texts = [[(i * 7 + j) % vocab_size for j in range(max_len)] for i in range(limit or 16)]
+            labels = [i % int(task_spec.additional_config.get('num_classes', 2)) for i in range(len(texts))]
+            dataset = _IntSeqDataset(texts, labels)
+        return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0, collate_fn=_collate_cls)
+
+    if task_spec.task_type == 'seq2seq':
+        path = base_dir / 'seq2seq_tiny.jsonl'
+        if path.exists():
+            dataset = _load_seq2seq_tiny(path, vocab_size, max_len, limit)
+        else:
+            # Minimal synthetic
+            class _Tmp(TorchDataset):
+                def __len__(self):
+                    return limit or 8
+                def __getitem__(self, idx):
+                    src = torch.tensor([(idx + j) % vocab_size for j in range(max_len)], dtype=torch.long)
+                    tgt = torch.tensor([(idx * 3 + j) % vocab_size for j in range(max_len)], dtype=torch.long)
+                    return {
+                        'input_ids': src,
+                        'decoder_input_ids': torch.cat([tgt[:-1], torch.tensor([0])]),
+                        'labels': tgt,
+                    }
+            dataset = _Tmp()
+        return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0, collate_fn=_collate_seq2seq)
+
+    raise ValueError(f"Unsupported task type: {task_spec.task_type}")

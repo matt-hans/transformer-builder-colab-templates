@@ -96,7 +96,9 @@ class ExperimentDB:
                     config TEXT,
                     notes TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    status TEXT DEFAULT 'running'
+                    status TEXT DEFAULT 'running',
+                    sweep_id TEXT,
+                    sweep_params TEXT
                 )
             ''')
 
@@ -136,11 +138,35 @@ class ExperimentDB:
             conn.commit()
             logger.debug("Database schema created/validated")
 
+            # Ensure columns exist on older DBs (idempotent)
+            try:
+                cursor.execute("PRAGMA table_info(runs)")
+                cols = {row[1] for row in cursor.fetchall()}
+                if 'sweep_id' not in cols:
+                    cursor.execute("ALTER TABLE runs ADD COLUMN sweep_id TEXT")
+                if 'sweep_params' not in cols:
+                    cursor.execute("ALTER TABLE runs ADD COLUMN sweep_params TEXT")
+                if 'gist_id' not in cols:
+                    cursor.execute("ALTER TABLE runs ADD COLUMN gist_id TEXT")
+                if 'gist_revision' not in cols:
+                    cursor.execute("ALTER TABLE runs ADD COLUMN gist_revision TEXT")
+                if 'gist_sha256' not in cols:
+                    cursor.execute("ALTER TABLE runs ADD COLUMN gist_sha256 TEXT")
+                conn.commit()
+            except Exception:
+                pass
+
     def log_run(
         self,
         run_name: str,
         config: Dict[str, Any],
-        notes: str = ''
+        notes: str = '',
+        *,
+        sweep_id: str | None = None,
+        sweep_params: Dict[str, Any] | None = None,
+        gist_id: str | None = None,
+        gist_revision: str | None = None,
+        gist_sha256: str | None = None,
     ) -> int:
         """Create new experiment run and return run_id.
 
@@ -163,10 +189,19 @@ class ExperimentDB:
             cursor = conn.cursor()
             cursor.execute(
                 '''
-                INSERT INTO runs (run_name, config, notes, status)
-                VALUES (?, ?, ?, 'running')
+                INSERT INTO runs (run_name, config, notes, status, sweep_id, sweep_params, gist_id, gist_revision, gist_sha256)
+                VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?)
                 ''',
-                (run_name, config_json, notes)
+                (
+                    run_name,
+                    config_json,
+                    notes,
+                    sweep_id,
+                    json.dumps(sweep_params) if sweep_params else None,
+                    gist_id,
+                    gist_revision,
+                    gist_sha256,
+                )
             )
             run_id = cursor.lastrowid
             conn.commit()
@@ -522,3 +557,16 @@ class ExperimentDB:
             'best_epoch': int(best_epoch) if pd.notna(best_epoch) else None,
             'config': run['config']
         }
+
+    def get_runs_for_sweep(self, sweep_id: str) -> pd.DataFrame:
+        """Return runs logged under a given sweep_id."""
+        query = '''
+            SELECT run_id, run_name, created_at, status, notes, sweep_params
+            FROM runs
+            WHERE sweep_id = ?
+            ORDER BY created_at ASC
+        '''
+
+        with sqlite3.connect(self.db_path) as conn:
+            df = pd.read_sql_query(query, conn, params=(sweep_id,))
+        return df

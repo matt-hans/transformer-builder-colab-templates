@@ -7,6 +7,11 @@ and maintain consistency across test files.
 
 import pytest
 import torch
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+except Exception:
+    pass
 
 
 @pytest.fixture

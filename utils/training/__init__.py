@@ -16,10 +16,11 @@ except ImportError:
 
 # Training core (Task 4.1) - requires pytorch_lightning
 try:
-    from .training_core import TrainingCoordinator, train_model
+    from .training_core import TrainingCoordinator, train_model, run_training
 except ImportError:
     TrainingCoordinator = None
     train_model = None
+    run_training = None
 
 # Metrics tracking (Task T002)
 from .metrics_tracker import MetricsTracker
@@ -39,7 +40,9 @@ from .environment_snapshot import (
 from .seed_manager import set_random_seed, seed_worker, create_seeded_generator
 
 # Training configuration versioning (Task T017)
-from .training_config import TrainingConfig, compare_configs
+from .training_config import TrainingConfig, compare_configs, build_task_spec, build_eval_config
+from .task_spec import TaskSpec, get_default_task_specs
+from .eval_config import EvalConfig
 
 __all__ = [
     # Dataset utilities
@@ -52,6 +55,7 @@ __all__ = [
     # Training
     'TrainingCoordinator',
     'train_model',
+    'run_training',
 
     # Metrics tracking
     'MetricsTracker',
@@ -75,4 +79,11 @@ __all__ = [
     # Training configuration
     'TrainingConfig',
     'compare_configs',
+    'build_task_spec',
+    'build_eval_config',
+
+    # Task/Eval abstractions
+    'TaskSpec',
+    'EvalConfig',
+    'get_default_task_specs',
 ]

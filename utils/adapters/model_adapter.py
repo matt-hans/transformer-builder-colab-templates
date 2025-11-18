@@ -1,13 +1,13 @@
 """
-Universal Model Adapter for handling arbitrary transformer architectures.
+Universal Model Adapter utilities and training adapters.
 
-This module provides tools to wrap generated models with complex forward() signatures
-into a unified interface compatible with PyTorch Lightning and standard training loops.
-
-Key components:
-- ModelSignatureInspector: Analyzes forward() method signatures
-- ComputationalGraphExecutor: Resolves intermediate output dependencies
-- UniversalModelAdapter: Lightning-compatible wrapper for any model
+This module provides two layers of abstraction:
+- Signature/execution helpers for arbitrarily generated models with complex
+  forward() signatures (ModelSignatureInspector, ComputationalGraphExecutor,
+  UniversalModelAdapter for Lightning integration).
+- A family of lightweight, task-aware ModelAdapter classes used by the
+  validation tiers and training/eval loops to interact with arbitrary
+  architectures through a consistent API.
 """
 
 import inspect
@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Any, Dict, List, Optional, Set, Tuple
+from abc import ABC, abstractmethod
 
 # Optional dependency - only needed for Tier 3 (UniversalModelAdapter)
 try:
@@ -30,7 +31,7 @@ try:
     HAS_TRANSFORMERS = True
 except ImportError:
     PreTrainedTokenizer = None
-    HAS_TRANSFORMERS = False
+HAS_TRANSFORMERS = False
 
 
 # ==============================================================================
@@ -188,6 +189,247 @@ class ModelSignatureInspector:
 
     def __repr__(self) -> str:
         return f"ModelSignatureInspector({self.model.__class__.__name__}, params={self.params})"
+
+
+# ==============================================================================
+# TASK-AWARE MODEL ADAPTERS (Workstream B)
+# ==============================================================================
+
+class ModelAdapter(ABC):
+    """Adapter interface between raw model and task/validation code."""
+
+    @abstractmethod
+    def prepare_inputs(self, batch: Dict[str, Any], task: "TaskSpec") -> Dict[str, Any]:
+        ...
+
+    @abstractmethod
+    def forward_for_loss(
+        self,
+        model: Any,
+        batch: Dict[str, Any],
+        task: "TaskSpec",
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Run forward pass and return (loss, outputs_dict)."""
+        ...
+
+    @abstractmethod
+    def get_logits(self, outputs: Dict[str, Any], task: "TaskSpec"):
+        ...
+
+    @abstractmethod
+    def predict(self, outputs: Dict[str, Any], task: "TaskSpec"):
+        ...
+
+    def get_attention_maps(self, outputs: Dict[str, Any], task: "TaskSpec"):
+        """Optional: return attention maps for interpretability (Tier 2)."""
+        return None
+
+
+def _extract_logits_generic(output: Any) -> torch.Tensor:
+    """Best-effort extraction of logits tensor from common output types."""
+    if isinstance(output, torch.Tensor):
+        return output
+    if isinstance(output, tuple) and len(output) > 0:
+        if isinstance(output[0], torch.Tensor):
+            return output[0]
+    if isinstance(output, dict):
+        if 'logits' in output and isinstance(output['logits'], torch.Tensor):
+            return output['logits']
+        if 'last_hidden_state' in output and isinstance(output['last_hidden_state'], torch.Tensor):
+            return output['last_hidden_state']
+        # First tensor value
+        for v in output.values():
+            if isinstance(v, torch.Tensor):
+                return v
+    if hasattr(output, 'logits') and isinstance(output.logits, torch.Tensor):
+        return output.logits
+    if hasattr(output, 'last_hidden_state') and isinstance(output.last_hidden_state, torch.Tensor):
+        return output.last_hidden_state
+    # Fallthrough: return as-is; callers may fail fast
+    return output
+
+
+class DecoderOnlyLMAdapter(ModelAdapter):
+    """Adapter for decoder-only language models (LM)."""
+
+    def prepare_inputs(self, batch: Dict[str, Any], task: "TaskSpec") -> Dict[str, Any]:
+        prepared = {
+            'input_ids': batch.get('input_ids'),
+        }
+        if 'attention_mask' in batch:
+            prepared['attention_mask'] = batch['attention_mask']
+        if 'labels' in batch:
+            prepared['labels'] = batch['labels']
+        return prepared
+
+    def forward_for_loss(
+        self,
+        model: Any,
+        batch: Dict[str, Any],
+        task: "TaskSpec",
+    ) -> Tuple[Any, Dict[str, Any]]:
+        input_ids = batch['input_ids']
+        attention_mask = batch.get('attention_mask')
+        labels = batch.get('labels')
+
+        if attention_mask is not None:
+            output = model(input_ids, attention_mask=attention_mask)
+        else:
+            output = model(input_ids)
+
+        logits = _extract_logits_generic(output)
+        outputs: Dict[str, Any] = {'logits': logits}
+
+        # Compute language modeling loss if labels are provided
+        loss = None
+        if labels is not None:
+            shift = bool(task.additional_config.get('shift_labels', True))
+            pad_id = int(task.special_tokens.get('pad_token_id', -100))
+            if shift:
+                shift_logits = logits[:, :-1, :].contiguous()
+                shift_labels = labels[:, 1:].contiguous()
+                loss = F.cross_entropy(
+                    shift_logits.view(-1, shift_logits.size(-1)),
+                    shift_labels.view(-1),
+                    ignore_index=pad_id,
+                )
+            else:
+                loss = F.cross_entropy(
+                    logits.view(-1, logits.size(-1)),
+                    labels.view(-1),
+                    ignore_index=pad_id,
+                )
+
+        return loss, outputs
+
+    def get_logits(self, outputs: Dict[str, Any], task: "TaskSpec"):
+        return outputs.get('logits')
+
+    def predict(self, outputs: Dict[str, Any], task: "TaskSpec"):
+        logits = self.get_logits(outputs, task)
+        return logits.argmax(dim=-1)
+
+
+class EncoderOnlyClassificationAdapter(ModelAdapter):
+    """Adapter for encoder-only classification models."""
+
+    def prepare_inputs(self, batch: Dict[str, Any], task: "TaskSpec") -> Dict[str, Any]:
+        prepared = {
+            'input_ids': batch.get('input_ids'),
+        }
+        if 'attention_mask' in batch:
+            prepared['attention_mask'] = batch['attention_mask']
+        if 'labels' in batch:
+            prepared['labels'] = batch['labels']
+        return prepared
+
+    def _pool_logits(self, logits: torch.Tensor, attention_mask: Optional[torch.Tensor], num_classes: Optional[int]) -> torch.Tensor:
+        # If already [B, C], return as-is
+        if logits.dim() == 2:
+            return logits
+        # If [B, T, C], pool over T
+        if logits.dim() == 3:
+            if attention_mask is not None:
+                mask = attention_mask.float().unsqueeze(-1)
+                summed = (logits * mask).sum(dim=1)
+                denom = mask.sum(dim=1).clamp_min(1e-6)
+                return summed / denom
+            return logits.mean(dim=1)
+        # Otherwise, try flatten last dim to num_classes if known
+        if num_classes is not None and logits.size(-1) == num_classes:
+            return logits.view(logits.size(0), -1, num_classes).mean(dim=1)
+        return logits.squeeze()
+
+    def forward_for_loss(
+        self,
+        model: Any,
+        batch: Dict[str, Any],
+        task: "TaskSpec",
+    ) -> Tuple[Any, Dict[str, Any]]:
+        input_ids = batch['input_ids']
+        attention_mask = batch.get('attention_mask')
+        labels = batch.get('labels')
+
+        if attention_mask is not None:
+            output = model(input_ids, attention_mask=attention_mask)
+        else:
+            output = model(input_ids)
+
+        raw_logits = _extract_logits_generic(output)
+        num_classes = task.additional_config.get('num_classes')
+        pooled = self._pool_logits(raw_logits, attention_mask, num_classes)
+        outputs: Dict[str, Any] = {'logits': pooled}
+
+        loss = None
+        if labels is not None:
+            loss = F.cross_entropy(pooled, labels.long())
+
+        return loss, outputs
+
+    def get_logits(self, outputs: Dict[str, Any], task: "TaskSpec"):
+        return outputs.get('logits')
+
+    def predict(self, outputs: Dict[str, Any], task: "TaskSpec"):
+        logits = self.get_logits(outputs, task)
+        return logits.argmax(dim=-1)
+
+
+class EncoderDecoderSeq2SeqAdapter(ModelAdapter):
+    """Adapter for encoder–decoder seq2seq models."""
+
+    def prepare_inputs(self, batch: Dict[str, Any], task: "TaskSpec") -> Dict[str, Any]:
+        prepared = {
+            'input_ids': batch.get('input_ids'),
+            'decoder_input_ids': batch.get('decoder_input_ids'),
+        }
+        if 'attention_mask' in batch:
+            prepared['attention_mask'] = batch['attention_mask']
+        if 'labels' in batch:
+            prepared['labels'] = batch['labels']
+        return prepared
+
+    def forward_for_loss(
+        self,
+        model: Any,
+        batch: Dict[str, Any],
+        task: "TaskSpec",
+    ) -> Tuple[Any, Dict[str, Any]]:
+        kwargs: Dict[str, Any] = {
+            'input_ids': batch.get('input_ids'),
+            'decoder_input_ids': batch.get('decoder_input_ids'),
+        }
+        if batch.get('attention_mask') is not None:
+            kwargs['attention_mask'] = batch['attention_mask']
+
+        output = model(**kwargs) if hasattr(model, 'forward') else model(kwargs)
+        logits = _extract_logits_generic(output)
+        outputs: Dict[str, Any] = {'logits': logits}
+
+        labels = batch.get('labels')
+        loss = None
+        if labels is not None:
+            ignore_index = int(task.special_tokens.get('ignore_index', -100))
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                labels.view(-1),
+                ignore_index=ignore_index,
+            )
+
+        # Try to expose attention maps if present
+        if isinstance(output, dict) and 'attentions' in output:
+            outputs['attentions'] = output['attentions']
+
+        return loss, outputs
+
+    def get_logits(self, outputs: Dict[str, Any], task: "TaskSpec"):
+        return outputs.get('logits')
+
+    def predict(self, outputs: Dict[str, Any], task: "TaskSpec"):
+        logits = self.get_logits(outputs, task)
+        return logits.argmax(dim=-1)
+
+    def get_attention_maps(self, outputs: Dict[str, Any], task: "TaskSpec"):
+        return outputs.get('attentions')
 
 
 # ==============================================================================

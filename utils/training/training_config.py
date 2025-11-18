@@ -155,7 +155,13 @@ class TrainingConfig:
     d_ff: int = 3072
     dropout: float = 0.1
 
-    # === Dataset ===
+    # === Dataset / Task Selection ===
+    # Optional high-level task selector used by TaskSpec/EvalConfig builders
+    task_name: str = "lm_tiny"
+    # Optional dataset preset identifier for evaluation; if None, derived from task_name
+    eval_dataset_id: Optional[str] = None
+
+    # Legacy dataset fields (kept for backwards compatibility and power users)
     dataset_name: str = "wikitext-103-v1"
     dataset_split: str = "train"
     dataset_subset: Optional[str] = None
@@ -519,3 +525,44 @@ __all__ = [
     'compare_configs',
     'print_config_diff',
 ]
+
+# -----------------------------------------------------------------------------
+# Builders for new abstractions (TaskSpec / EvalConfig)
+# -----------------------------------------------------------------------------
+
+def build_task_spec(training_config: 'TrainingConfig'):
+    """
+    Build a TaskSpec from the provided TrainingConfig.
+
+    Notes:
+        - Imports are local to avoid import cycles during static analysis/tests.
+        - Defaults resolve from `task_name` to built-in tiny presets.
+    """
+    from .task_spec import get_default_task_specs, TaskSpec
+
+    presets = get_default_task_specs()
+    name = training_config.task_name
+    if name not in presets:
+        raise ValueError(f"Unknown task_name '{name}'. Available: {list(presets.keys())}")
+    return presets[name]
+
+
+def build_eval_config(training_config: 'TrainingConfig'):
+    """
+    Build an EvalConfig using TrainingConfig defaults.
+
+    Derives dataset_id from `eval_dataset_id` if set, otherwise from `task_name`.
+    """
+    from .eval_config import EvalConfig
+
+    dataset_id = training_config.eval_dataset_id or f"{training_config.task_name}_v1"
+    return EvalConfig(
+        dataset_id=dataset_id,
+        split="validation",
+        max_eval_examples=training_config.max_val_samples or 512,
+        batch_size=training_config.batch_size,
+        num_workers=0,
+        max_seq_length=training_config.max_seq_len,
+        eval_interval_steps=100,
+        eval_on_start=True,
+    )

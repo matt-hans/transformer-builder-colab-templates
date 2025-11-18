@@ -1,0 +1,10 @@
+hello world
+machine learning
+transformer builder
+openai codex cli
+tiny dataset for lm
+the quick brown fox
+jumps over the lazy dog
+colab friendly
+eval runner test
+adapter api demo

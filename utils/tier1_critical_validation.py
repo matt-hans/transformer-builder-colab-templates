@@ -49,9 +49,14 @@ def _detect_vocab_size(model: nn.Module, config: Any) -> int:
     return 50257
 
 
-def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor,
-                           attention_mask: Optional[torch.Tensor] = None,
-                           config: Optional[Any] = None) -> torch.Tensor:
+def _safe_get_model_output(
+    model: nn.Module,
+    input_ids: torch.Tensor,
+    attention_mask: Optional[torch.Tensor] = None,
+    config: Optional[Any] = None,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
+) -> torch.Tensor:
     """
     Safely extract logits tensor from model output.
 
@@ -66,33 +71,42 @@ def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor,
     - ModelOutput object: return .logits attribute
     """
     # Check if model has complex signature requiring intermediate outputs
+    # Prefer task-aware adapter when provided
+    if adapter is not None and task_spec is not None:
+        try:
+            batch = {'input_ids': input_ids}
+            if attention_mask is not None:
+                batch['attention_mask'] = attention_mask
+
+            prepared = adapter.prepare_inputs(batch, task_spec)
+            _loss, outputs = adapter.forward_for_loss(model, prepared, task_spec)
+            logits = adapter.get_logits(outputs, task_spec)
+            return logits
+        except Exception:
+            # Fall back to signature-based execution below
+            pass
+
     try:
         from ..adapters.model_adapter import ModelSignatureInspector, ComputationalGraphExecutor
 
         inspector = ModelSignatureInspector(model)
 
         if inspector.requires_intermediate_outputs():
-            # Complex signature - use executor
             executor = ComputationalGraphExecutor(model, inspector)
             output = executor.forward(input_ids, attention_mask)
         else:
-            # Simple signature - call directly
             sig_params = inspector.get_parameters()
-
             if 'attention_mask' in sig_params and attention_mask is not None:
                 output = model(input_ids, attention_mask=attention_mask)
             else:
                 output = model(input_ids)
-
     except ImportError:
-        # Adapters not available - try direct call
         try:
             if attention_mask is not None:
                 output = model(input_ids, attention_mask=attention_mask)
             else:
                 output = model(input_ids)
         except TypeError:
-            # Fallback to just input_ids
             output = model(input_ids)
 
     # Extract tensor from output
@@ -127,7 +141,9 @@ def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor,
 
 def test_shape_robustness(
     model: nn.Module,
-    config: Any
+    config: Any,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
 ) -> Union["pd.DataFrame", List[Dict[str, Any]]]:
     """
     Validate model across diverse input shapes.
@@ -160,7 +176,7 @@ def test_shape_robustness(
             input_ids = torch.randint(0, vocab_size, (case["batch"], case["seq_len"])).to(device)
 
             with torch.no_grad():
-                output = _safe_get_model_output(model, input_ids)
+                output = _safe_get_model_output(model, input_ids, None, config, adapter, task_spec)
 
             expected_shape = (case["batch"], case["seq_len"], vocab_size)
             actual_shape = tuple(output.shape)
@@ -191,7 +207,9 @@ def test_shape_robustness(
 
 def test_gradient_flow(
     model: nn.Module,
-    config: Any
+    config: Any,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
 ) -> Union["pd.DataFrame", Dict[str, Any]]:
     """
     Verify gradients propagate through all layers.
@@ -218,7 +236,7 @@ def test_gradient_flow(
 
     # Forward + backward
     input_ids = torch.randint(0, vocab_size, (2, 32)).to(device)
-    logits = _safe_get_model_output(model, input_ids)
+    logits = _safe_get_model_output(model, input_ids, None, config, adapter, task_spec)
 
     # Use appropriate loss based on output shape
     try:
@@ -295,7 +313,13 @@ def test_gradient_flow(
     return grad_stats
 
 
-def test_output_stability(model: nn.Module, config: Any, n_samples: int = 100) -> Dict[str, Any]:
+def test_output_stability(
+    model: nn.Module,
+    config: Any,
+    n_samples: int = 100,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
+) -> Dict[str, Any]:
     """
     Analyze output distribution for numerical issues.
 
@@ -322,7 +346,7 @@ def test_output_stability(model: nn.Module, config: Any, n_samples: int = 100) -
     with torch.no_grad():
         for _ in range(n_samples):
             input_ids = torch.randint(0, vocab_size, (1, 32)).to(device)
-            logits = _safe_get_model_output(model, input_ids)
+            logits = _safe_get_model_output(model, input_ids, None, config, adapter, task_spec)
             outputs.append(logits.cpu())
 
     outputs = torch.cat(outputs, dim=0)
@@ -462,7 +486,9 @@ def test_parameter_initialization(
 
 def test_memory_footprint(
     model: nn.Module,
-    config: Any
+    config: Any,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
 ) -> Union["pd.DataFrame", List[Dict[str, str]]]:
     """
     Measure memory usage across batch sizes.
@@ -512,7 +538,7 @@ def test_memory_footprint(
             input_ids = torch.randint(0, vocab_size, (batch_size, 64)).to(device)
 
             with torch.no_grad():
-                output = _safe_get_model_output(model, input_ids)
+                output = _safe_get_model_output(model, input_ids, None, config, adapter, task_spec)
 
             # Measure after
             if device.type == 'cuda':
@@ -571,7 +597,13 @@ def test_memory_footprint(
     return results
 
 
-def test_inference_speed(model: nn.Module, config: Any, n_trials: int = 50) -> Dict[str, float]:
+def test_inference_speed(
+    model: nn.Module,
+    config: Any,
+    n_trials: int = 50,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
+) -> Dict[str, float]:
     """
     Benchmark inference latency and throughput.
 
@@ -592,7 +624,7 @@ def test_inference_speed(model: nn.Module, config: Any, n_trials: int = 50) -> D
     for _ in range(5):
         input_ids = torch.randint(0, vocab_size, (1, 64)).to(device)
         with torch.no_grad():
-            _ = model(input_ids)
+            _ = _safe_get_model_output(model, input_ids, None, config, adapter, task_spec)
         if device.type == 'cuda':
             torch.cuda.synchronize()
 
@@ -603,7 +635,7 @@ def test_inference_speed(model: nn.Module, config: Any, n_trials: int = 50) -> D
 
         start = time.perf_counter()
         with torch.no_grad():
-            output = _safe_get_model_output(model, input_ids)
+            output = _safe_get_model_output(model, input_ids, None, config, adapter, task_spec)
         if device.type == 'cuda':
             torch.cuda.synchronize()
         end = time.perf_counter()
@@ -647,3 +679,17 @@ def test_inference_speed(model: nn.Module, config: Any, n_trials: int = 50) -> D
         plt.show()
 
     return stats
+
+# Prevent pytest from collecting these API-style functions as tests when imported
+for _name in [
+    'test_shape_robustness',
+    'test_gradient_flow',
+    'test_output_stability',
+    'test_parameter_initialization',
+    'test_memory_footprint',
+    'test_inference_speed',
+]:
+    try:
+        globals()[_name].__test__ = False  # type: ignore[attr-defined]
+    except Exception:
+        pass

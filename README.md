@@ -46,18 +46,31 @@ Advanced testing and training infrastructure for transformer models built with [
 
 ```
 transformer-builder-colab-templates/
-├── template.ipynb              # Testing & validation (Tier 1 + 2)
-├── training.ipynb              # Training utilities (Tier 3)
+├── template.ipynb                 # Testing & validation (Tier 1 + 2)
+├── training.ipynb                 # Training utilities (Tier 3) + modes/sweeps
+├── cli/                           # CLI entrypoints (run_tiers, run_training)
+│   ├── __init__.py
+│   ├── run_tiers.py
+│   └── run_training.py
+├── docs/                          # Platform docs (v4.0.0)
+│   ├── ARCHITECTURE_OVERVIEW_v4.0.0.md
+│   ├── USAGE_GUIDE_COLAB_AND_CLI.md
+│   └── DEVELOPER_GUIDE_TASKS_EVAL.md
+├── examples/
+│   └── datasets/                  # Tiny datasets for quick eval
+│       ├── lm_tiny.txt
+│       ├── cls_tiny.csv
+│       └── seq2seq_tiny.jsonl
 ├── utils/
-│   ├── test_functions.py       # Unified test facade
+│   ├── test_functions.py          # Unified test facade
 │   ├── tier1_critical_validation.py
 │   ├── tier2_advanced_analysis.py
 │   ├── tier3_training_utilities.py
-│   ├── adapters/               # Model introspection
-│   ├── tokenization/           # BPE training & validation
-│   ├── training/               # Dataset, checkpoints, export
-│   └── ui/                     # Setup wizard & presets
-├── requirements-colab.txt      # Dependency documentation
+│   ├── adapters/                  # Model introspection + ModelAdapter + gist_loader
+│   ├── tokenization/              # BPE training & validation
+│   ├── training/                  # Dataset, checkpoints, eval_runner, export, sweeps, ExperimentDB
+│   └── ui/                        # Setup wizard & mode presets
+├── requirements-colab.txt         # Dependency documentation
 └── README.md
 ```
 
@@ -78,6 +91,48 @@ If you have model code outside Transformer Builder:
 ## Examples
 
 See `examples/` directory for pre-populated notebooks demonstrating common architectures.
+
+## Docs (v4.0.0)
+
+- Architecture overview: `docs/ARCHITECTURE_OVERVIEW_v4.0.0.md`
+- Usage guide (Colab + CLI): `docs/USAGE_GUIDE_COLAB_AND_CLI.md`
+- Developer guide (Tasks/Adapters/Eval): `docs/DEVELOPER_GUIDE_TASKS_EVAL.md`
+
+## CLI Quick Start
+
+Run quick validation (Tier 1) with a tiny stub model:
+
+```
+python -m cli.run_tiers --config configs/example_tiers.json  # optional config
+```
+
+Run training + tiny evaluation:
+
+```
+python -m cli.run_training --config configs/example_train.json
+```
+
+Example training config JSON:
+
+```
+{
+  "task_name": "lm_tiny",
+  "epochs": 1,
+  "batch_size": 2,
+  "vocab_size": 101,
+  "max_seq_len": 16,
+  "learning_rate": 0.0005,
+  "model_file": "./path/to/model.py",  // or: "gist_id": "...", "gist_revision": "..."
+  "eval": {"dataset_id": "lm_tiny_v1", "batch_size": 2},
+  "log_to_db": true,
+  "run_name": "cli-run-01"
+}
+```
+
+Notes:
+- `model_file` can be a directory (containing `model.py`) or a file path; the CLI tries `build_model()` then `Model` class.
+- If `gist_id` is provided, the CLI fetches the gist (best effort in restricted environments) and tries to import `model.py`.
+- Without a model provided, the CLI uses a tiny LM stub with the requested `vocab_size`.
 
 ## Support
 

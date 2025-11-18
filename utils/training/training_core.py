@@ -19,13 +19,24 @@ except ImportError:
     pl = None
     HAS_LIGHTNING = False
 
-from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
-from pytorch_lightning.loggers import TensorBoardLogger
+if HAS_LIGHTNING:
+    from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+    from pytorch_lightning.loggers import TensorBoardLogger
+else:
+    # Lightweight dummies to avoid import errors when Lightning isn't installed
+    EarlyStopping = LearningRateMonitor = ModelCheckpoint = object  # type: ignore
+    TensorBoardLogger = object  # type: ignore
 from datasets import Dataset
 
 from ..adapters.model_adapter import UniversalModelAdapter
-from ..tokenization.adaptive_tokenizer import AdaptiveTokenizer
-from ..tokenization.data_module import AdaptiveTokenizerDataModule
+try:
+    from ..tokenization.adaptive_tokenizer import AdaptiveTokenizer
+except Exception:
+    AdaptiveTokenizer = None  # type: ignore
+try:
+    from ..tokenization.data_module import AdaptiveTokenizerDataModule
+except Exception:
+    AdaptiveTokenizerDataModule = None  # type: ignore
 from .checkpoint_manager import CheckpointManager
 from .dataset_utilities import DatasetLoader
 
@@ -630,4 +641,92 @@ def train_model(model: torch.nn.Module,
         batch_size=batch_size,
         learning_rate=learning_rate,
         **kwargs
+        )
+
+
+# -----------------------------------------------------------------------------
+# Adapter-first training facade (Workstream B integration)
+# -----------------------------------------------------------------------------
+
+def run_training(
+    model: torch.nn.Module,
+    adapter: Any,
+    training_config: Any,
+    task_spec: Any,
+    eval_config: Any,
+    experiment_db: Optional[Any] = None,
+    metrics_tracker: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    Minimal adapter-first training path using Tier 3 utilities.
+
+    This provides a non-Lightning path that leverages the new ModelAdapter API
+    without refactoring the existing TrainingCoordinator. It runs a short
+    fine-tuning loop on synthetic data (until Workstream C provides dataloaders).
+
+    Args:
+        model: PyTorch model
+        adapter: ModelAdapter instance
+        training_config: TrainingConfig-like object (dataclass or SimpleNamespace)
+        task_spec: TaskSpec instance
+        eval_config: EvalConfig instance (currently unused here; reserved)
+        experiment_db: Optional experiment DB handle
+        metrics_tracker: Optional MetricsTracker (if provided, will be used internally later)
+
+    Returns:
+        Dict with training metrics summary compatible with Tier 3 outputs.
+    """
+    # Defer heavy import to avoid circulars
+    from .training_config import TrainingConfig
+    from . import metrics_tracker as _mt  # noqa: F401  (reserved for future)
+    from ..tier3_training_utilities import test_fine_tuning
+
+    # Resolve epochs and batch size from config defaults
+    epochs = getattr(training_config, 'epochs', 1) or 1
+    batch_size = getattr(training_config, 'batch_size', 4) or 4
+    learning_rate = getattr(training_config, 'learning_rate', 5e-5)
+    use_amp = getattr(training_config, 'use_amp', False)
+    weight_decay = getattr(training_config, 'weight_decay', 0.01)
+    gradient_accumulation_steps = getattr(training_config, 'gradient_accumulation_steps', 1)
+    gradient_clip_norm = getattr(training_config, 'max_grad_norm', 1.0)
+    random_seed = getattr(training_config, 'random_seed', 42)
+    deterministic = getattr(training_config, 'deterministic', False)
+
+    # Call adapter-aware fine-tuning loop (uses synthetic data if none provided)
+    results = test_fine_tuning(
+        model=model,
+        config=training_config,
+        n_epochs=int(epochs),
+        learning_rate=float(learning_rate),
+        weight_decay=float(weight_decay),
+        batch_size=int(batch_size),
+        use_wandb=False,
+        use_amp=bool(use_amp),
+        gradient_accumulation_steps=int(gradient_accumulation_steps),
+        gradient_clip_norm=float(gradient_clip_norm),
+        random_seed=int(random_seed),
+        deterministic=bool(deterministic),
+        adapter=adapter,
+        task_spec=task_spec,
     )
+
+    # Optional: run evaluation on tiny dataset presets if available
+    try:
+        from .dataset_utilities import build_dataloader
+        from .eval_runner import run_evaluation
+        eval_dl = build_dataloader(task_spec, eval_config, training_config)
+        eval_summary = run_evaluation(
+            model=model,
+            adapter=adapter,
+            task=task_spec,
+            eval_config=eval_config,
+            training_config=training_config,
+            dataloader=eval_dl,
+            metrics_tracker=None,
+        )
+        results['eval_summary'] = eval_summary
+    except Exception:
+        pass
+
+    # TODO (Workstream D-E): integrate ExperimentDB/metrics_tracker, sweeps
+    return results

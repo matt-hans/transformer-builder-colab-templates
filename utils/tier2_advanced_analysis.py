@@ -84,12 +84,27 @@ def _extract_output_tensor(output: Any) -> torch.Tensor:
     return output
 
 
-def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
+def _safe_get_model_output(
+    model: nn.Module,
+    input_ids: torch.Tensor,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
+) -> torch.Tensor:
     """
     Safely extract logits tensor from model output.
 
     Wraps model() call and handles diverse output formats.
     """
+    # Prefer task-aware adapter if provided
+    if adapter is not None and task_spec is not None:
+        try:
+            batch = {'input_ids': input_ids}
+            prepared = adapter.prepare_inputs(batch, task_spec)
+            _loss, outputs = adapter.forward_for_loss(model, prepared, task_spec)
+            logits = adapter.get_logits(outputs, task_spec)
+            return logits
+        except Exception:
+            pass
     output = model(input_ids)
     return _extract_output_tensor(output)
 
@@ -153,7 +168,9 @@ def test_attention_patterns(
     model: nn.Module,
     config: Any,
     input_text: str = "The quick brown fox jumps over the lazy dog",
-    tokenizer: Optional[Any] = None
+    tokenizer: Optional[Any] = None,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Visualize attention weights and analyze attention patterns.
@@ -205,6 +222,26 @@ def test_attention_patterns(
         token_labels = [f"T{i}" for i in range(input_ids.shape[1])]
 
     # Extract attention weights
+    # If adapter provides attention maps, prefer that path
+    if adapter is not None and task_spec is not None:
+        try:
+            batch = {'input_ids': input_ids}
+            prepared = adapter.prepare_inputs(batch, task_spec)
+            _loss, outputs = adapter.forward_for_loss(model, prepared, task_spec)
+            attn = adapter.get_attention_maps(outputs, task_spec)
+            if attn is not None:
+                # Normalize format to a list of tensors
+                if isinstance(attn, torch.Tensor):
+                    attention_weights = [attn.detach().cpu()]
+                elif isinstance(attn, list):
+                    attention_weights = [a.detach().cpu() for a in attn if isinstance(a, torch.Tensor)]
+                else:
+                    attention_weights = []
+                if attention_weights:
+                    # Proceed with analysis below
+                    pass
+        except Exception:
+            attention_weights = []
     # Detect model architecture and extract attention accordingly
     if _has_multihead_attention_layers(model):
         # Use specialized extraction for nn.MultiheadAttention
@@ -548,12 +585,25 @@ def test_attribution_analysis(
         print(f"❌ Attribution analysis failed: {str(e)}")
         return {"error": str(e)}
 
+# Prevent pytest from collecting these API-style functions as tests when imported
+for _name in [
+    'test_attention_patterns',
+    'test_attribution_analysis',
+    'test_robustness',
+]:
+    try:
+        globals()[_name].__test__ = False  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
 
 def test_robustness(
     model: nn.Module,
     config: Any,
     n_samples: int = 20,
-    noise_levels: List[float] = [0.0, 0.01, 0.05, 0.1, 0.2]
+    noise_levels: List[float] = [0.0, 0.01, 0.05, 0.1, 0.2],
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Test model robustness to input perturbations and noise.
@@ -614,7 +664,7 @@ def test_robustness(
 
             # Clean prediction
             with torch.no_grad():
-                clean_output = _safe_get_model_output(model, input_ids)
+                clean_output = _safe_get_model_output(model, input_ids, adapter, task_spec)
                 clean_pred = clean_output.argmax(dim=-1)
 
             # Add noise to embeddings (if supported)
@@ -648,7 +698,7 @@ def test_robustness(
                             noisy_input_ids = input_ids.clone()
                             mask = torch.rand_like(input_ids.float()) < noise_std * 10
                             noisy_input_ids[mask] = torch.randint(0, vocab_size, (mask.sum(),)).to(device)
-                            noisy_output = _safe_get_model_output(model, noisy_input_ids)
+                            noisy_output = _safe_get_model_output(model, noisy_input_ids, adapter, task_spec)
 
                         noisy_pred = noisy_output.argmax(dim=-1)
 

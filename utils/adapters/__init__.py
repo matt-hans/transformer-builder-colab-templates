@@ -9,11 +9,19 @@ into a unified interface compatible with PyTorch Lightning.
 from .model_adapter import (
     ModelSignatureInspector,
     ComputationalGraphExecutor,
-    UniversalModelAdapter
+    UniversalModelAdapter,
+    ModelAdapter,
+    DecoderOnlyLMAdapter,
+    EncoderOnlyClassificationAdapter,
+    EncoderDecoderSeq2SeqAdapter,
 )
 
 __all__ = [
     'ModelSignatureInspector',
     'ComputationalGraphExecutor',
     'UniversalModelAdapter',
+    'ModelAdapter',
+    'DecoderOnlyLMAdapter',
+    'EncoderOnlyClassificationAdapter',
+    'EncoderDecoderSeq2SeqAdapter',
 ]

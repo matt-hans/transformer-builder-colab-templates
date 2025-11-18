@@ -133,12 +133,33 @@ def _extract_output_tensor(output: Any) -> torch.Tensor:
     return output
 
 
-def _safe_get_model_output(model: nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
+def _safe_get_model_output(
+    model: nn.Module,
+    input_ids: torch.Tensor,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
+) -> torch.Tensor:
     """
     Safely extract logits tensor from model output.
 
     Wraps model() call and handles diverse output formats.
     """
+    if adapter is not None and task_spec is not None:
+        try:
+            batch = {'input_ids': input_ids}
+            prepared = adapter.prepare_inputs(batch, task_spec)
+            _loss, outputs = adapter.forward_for_loss(model, prepared, task_spec)
+            if isinstance(outputs, dict) and 'logits' in outputs:
+                return outputs['logits']
+            # Fallback extraction if adapter returns raw output
+            output_tmp = outputs
+            try:
+                from utils.adapters.model_adapter import _extract_logits_generic as _extract
+                return _extract(output_tmp)
+            except Exception:
+                pass
+        except Exception:
+            pass
     output = model(input_ids)
     return _extract_output_tensor(output)
 
@@ -405,6 +426,9 @@ def _run_training_epoch_simple(
     device: torch.device,
     pad_token_id: int = 0,
     max_grad_norm: float = 1.0,
+    *,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
 ) -> float:
     """
     Run a single training epoch over a provided DataLoader.
@@ -436,7 +460,7 @@ def _run_training_epoch_simple(
     for batch_tuple in dataloader:
         batch = batch_tuple[0].to(device, non_blocking=True)
 
-        logits = _safe_get_model_output(model, batch)
+        logits = _safe_get_model_output(model, batch, adapter, task_spec)
         shift_logits = logits[:, :-1, :].contiguous()
         shift_labels = batch[:, 1:].contiguous()
 
@@ -462,6 +486,9 @@ def _run_validation_epoch_simple(
     dataloader: DataLoader,
     device: torch.device,
     pad_token_id: int = 0,
+    *,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
 ) -> Dict[str, float]:
     """
     Run a single validation epoch over a provided DataLoader.
@@ -487,7 +514,7 @@ def _run_validation_epoch_simple(
     with torch.no_grad():
         for batch_tuple in dataloader:
             batch = batch_tuple[0].to(device, non_blocking=True)
-            logits = _safe_get_model_output(model, batch)
+            logits = _safe_get_model_output(model, batch, adapter, task_spec)
             shift_logits = logits[:, :-1, :].contiguous()
             shift_labels = batch[:, 1:].contiguous()
 
@@ -525,8 +552,11 @@ def _setup_training(
     orchestration surface for test_fine_tuning().
     """
     env = _setup_training_environment(
-        model, config, train_data, val_data, n_epochs, learning_rate, batch_size,
-        use_amp, use_wandb, random_seed=random_seed, use_lr_schedule=use_lr_schedule, weight_decay=weight_decay
+        model, config, train_data, val_data, n_epochs,
+        learning_rate, weight_decay, batch_size,
+        use_amp, use_wandb,
+        random_seed=random_seed,
+        use_lr_schedule=use_lr_schedule,
     )
     # Attach model for downstream helpers that expect it
     env['model'] = model
@@ -545,7 +575,9 @@ def _train_model(
     use_wandb: bool,
     *,
     log_grad_dist_every: int = 5,
-    log_grad_histogram: bool = False
+    log_grad_histogram: bool = False,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Run the training/validation loop and return histories, metrics, and timing.
@@ -575,13 +607,17 @@ def _train_model(
             pad_token_id=pad_token_id,
             log_grad_dist=log_this_epoch,
             grad_log_step=epoch,
-            log_grad_histogram=log_grad_histogram
+            log_grad_histogram=log_grad_histogram,
+            adapter=adapter,
+            task_spec=task_spec,
         )
 
         val_results = _run_validation_epoch(
             model,
             env['val_loader'], env['vocab_size'], env['metrics_tracker'], env['device'],
-            pad_token_id=pad_token_id
+            pad_token_id=pad_token_id,
+            adapter=adapter,
+            task_spec=task_spec,
         )
 
         epoch_duration = time.time() - epoch_start_time
@@ -664,7 +700,10 @@ def _compute_loss_and_backward(
     vocab_size: int,
     metrics_tracker: Any,
     gradient_accumulation_steps: int,
-    pad_token_id: int = 0
+    pad_token_id: int = 0,
+    *,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
 ) -> tuple:
     """
     Compute loss, backward pass with gradient accumulation scaling.
@@ -689,7 +728,7 @@ def _compute_loss_and_backward(
     # Forward pass with optional autocast
     if use_amp:
         with autocast():
-            logits = _safe_get_model_output(model, batch)
+            logits = _safe_get_model_output(model, batch, adapter, task_spec)
             shift_logits = logits[:, :-1, :].contiguous()
             shift_labels = batch[:, 1:].contiguous()
             loss = F.cross_entropy(
@@ -711,7 +750,7 @@ def _compute_loss_and_backward(
             )
     else:
         # Standard FP32 forward pass
-        logits = _safe_get_model_output(model, batch)
+        logits = _safe_get_model_output(model, batch, adapter, task_spec)
         shift_logits = logits[:, :-1, :].contiguous()
         shift_labels = batch[:, 1:].contiguous()
         loss = F.cross_entropy(
@@ -867,7 +906,9 @@ def _run_training_epoch(
     *,
     log_grad_dist: bool = False,
     grad_log_step: Optional[int] = None,
-    log_grad_histogram: bool = False
+    log_grad_histogram: bool = False,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Execute one training epoch with gradient accumulation support.
@@ -916,7 +957,9 @@ def _run_training_epoch(
             vocab_size=vocab_size,
             metrics_tracker=metrics_tracker,
             gradient_accumulation_steps=gradient_accumulation_steps,
-            pad_token_id=pad_token_id
+            pad_token_id=pad_token_id,
+            adapter=adapter,
+            task_spec=task_spec,
         )
 
         accumulation_counter += 1
@@ -999,7 +1042,10 @@ def _run_validation_epoch(
     vocab_size: int,
     metrics_tracker: Any,
     device: torch.device,
-    pad_token_id: int = 0
+    pad_token_id: int = 0,
+    *,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
 ) -> Dict[str, float]:
     """
     Execute validation epoch using DataLoader for efficient async data loading.
@@ -1025,7 +1071,7 @@ def _run_validation_epoch(
             # Extract batch from DataLoader tuple
             val_batch = batch_tuple[0].to(device, non_blocking=True)
 
-            logits = _safe_get_model_output(model, val_batch)
+            logits = _safe_get_model_output(model, val_batch, adapter, task_spec)
             shift_logits = logits[:, :-1, :].contiguous()
             shift_labels = val_batch[:, 1:].contiguous()
 
@@ -1211,7 +1257,9 @@ def test_fine_tuning(
     deterministic: bool = False,
     use_lr_schedule: bool = True,
     log_grad_dist_every: int = 5,
-    log_grad_histogram: bool = False
+    log_grad_histogram: bool = False,
+    adapter: Optional[Any] = None,
+    task_spec: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Run a basic fine-tuning loop with comprehensive metrics tracking.
@@ -1333,6 +1381,8 @@ def test_fine_tuning(
         use_wandb=use_wandb,
         log_grad_dist_every=log_grad_dist_every,
         log_grad_histogram=log_grad_histogram,
+        adapter=adapter,
+        task_spec=task_spec,
     )
 
     # Visualization
@@ -1680,3 +1730,14 @@ def test_benchmark_comparison(
         },
         "baseline_model": baseline_model_name,
     }
+
+# Prevent pytest from collecting these API-style functions as tests when imported
+for _name in [
+    'test_fine_tuning',
+    'test_hyperparameter_search',
+    'test_benchmark_comparison',
+]:
+    try:
+        globals()[_name].__test__ = False  # type: ignore[attr-defined]
+    except Exception:
+        pass

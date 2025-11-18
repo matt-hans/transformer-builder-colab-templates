@@ -1,0 +1,6 @@
+{"input": "hello", "target": "hi"}
+{"input": "machine", "target": "ml"}
+{"input": "transformer", "target": "tx"}
+{"input": "openai", "target": "oa"}
+{"input": "dataset", "target": "data"}
+{"input": "adapter", "target": "adpt"}

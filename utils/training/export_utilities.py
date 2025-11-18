@@ -14,6 +14,7 @@ import os
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List, Union, Literal
+import json
 from datetime import datetime
 import torch
 import torch.nn as nn
@@ -830,3 +831,76 @@ class ModelCardGenerator:
             print(f"✓ Model card generated: {output_path}")
 
         return card
+
+
+def create_repro_bundle(
+    run_id: str,
+    training_config,
+    task_spec,
+    eval_config,
+    environment_snapshot,
+    experiment_db,
+    dashboard_paths: Dict[str, str] | None,
+    output_path: str,
+) -> str:
+    """
+    Create a zip file with configs, environment, and artifacts for reproduction.
+
+    Returns absolute path to created .zip archive.
+    """
+    out_dir = Path(output_path) / f"repro_{run_id}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write configs
+    cfgs: Dict[str, Any] = {}
+    try:
+        cfgs['training_config'] = training_config.to_dict() if hasattr(training_config, 'to_dict') else dict(training_config)
+    except Exception:
+        cfgs['training_config'] = getattr(training_config, '__dict__', {})
+    try:
+        cfgs['task_spec'] = task_spec.to_dict() if hasattr(task_spec, 'to_dict') else getattr(task_spec, '__dict__', {})
+    except Exception:
+        cfgs['task_spec'] = {}
+    try:
+        cfgs['eval_config'] = eval_config.to_dict() if hasattr(eval_config, 'to_dict') else getattr(eval_config, '__dict__', {})
+    except Exception:
+        cfgs['eval_config'] = {}
+
+    with open(out_dir / 'configs.json', 'w') as f:
+        json.dump(cfgs, f, indent=2)
+
+    # Environment snapshot
+    if environment_snapshot:
+        try:
+            if isinstance(environment_snapshot, dict):
+                with open(out_dir / 'env_snapshot.json', 'w') as f:
+                    json.dump(environment_snapshot, f, indent=2)
+        except Exception:
+            pass
+
+    # Metrics export (ExperimentDB optional)
+    if experiment_db is not None:
+        try:
+            run_numeric = int(run_id) if str(run_id).isdigit() else None
+            if run_numeric is not None:
+                df = experiment_db.get_metrics(run_numeric)
+                df.to_csv(out_dir / 'metrics.csv', index=False)
+        except Exception:
+            pass
+
+    # Dashboard/artifacts
+    if dashboard_paths:
+        for name, path in (dashboard_paths or {}).items():
+            try:
+                src = Path(path)
+                if src.exists():
+                    import shutil as _sh
+                    _sh.copy(src, out_dir / src.name)
+            except Exception:
+                pass
+
+    # Create zip archive
+    import shutil as _sh
+    zip_base = str(out_dir.resolve())
+    archive = _sh.make_archive(zip_base, 'zip', root_dir=out_dir)
+    return archive

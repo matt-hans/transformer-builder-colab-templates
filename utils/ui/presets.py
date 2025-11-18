@@ -4,7 +4,7 @@ Configuration Presets for Common Training Scenarios.
 Provides quick-start configurations for different model sizes and use cases.
 """
 
-from typing import Dict, Any, Literal
+from typing import Dict, Any, Literal, Tuple
 from dataclasses import dataclass, asdict
 
 
@@ -341,3 +341,65 @@ class ConfigPresets:
                         break
 
         return recommended
+
+
+# -----------------------------------------------------------------------------
+# Mode presets for v4.0.0 (FAST_DEV, STANDARD_EXPERIMENT, ABLATION_SWEEP)
+# -----------------------------------------------------------------------------
+
+def build_configs_for_mode(mode_name: str) -> Tuple['TrainingConfigV4', Any, Any]:
+    """
+    Build (TrainingConfig, TaskSpec, EvalConfig) for a given mode.
+
+    Modes:
+      - FAST_DEV: tiny dataset, 1 epoch, small batch
+      - STANDARD_EXPERIMENT: moderate epochs and logging
+      - ABLATION_SWEEP: baseline config for sweeps (sweep defined separately)
+
+    Returns:
+      (training_config, task_spec, eval_config)
+    """
+    from utils.training.training_config import TrainingConfig as TrainingConfigV4
+    from utils.training.task_spec import get_default_task_specs
+    from utils.training.eval_config import EvalConfig
+
+    mode = mode_name.upper()
+    # Defaults
+    tcfg = TrainingConfigV4()
+    tcfg.task_name = 'lm_tiny'
+
+    if mode == 'FAST_DEV':
+        tcfg.epochs = 1
+        tcfg.batch_size = 2
+        tcfg.vocab_size = 101
+        tcfg.max_seq_len = 64
+        tcfg.learning_rate = 5e-4
+    elif mode == 'STANDARD_EXPERIMENT':
+        tcfg.epochs = 3
+        tcfg.batch_size = 8
+        tcfg.vocab_size = 50257
+        tcfg.max_seq_len = 128
+        tcfg.learning_rate = 1e-4
+    elif mode == 'ABLATION_SWEEP':
+        tcfg.epochs = 2
+        tcfg.batch_size = 4
+        tcfg.vocab_size = 1000
+        tcfg.max_seq_len = 128
+        tcfg.learning_rate = 2e-4
+    else:
+        raise ValueError(f"Unknown mode: {mode_name}")
+
+    # Task/Eval
+    task = get_default_task_specs()[tcfg.task_name]
+    ecfg = EvalConfig(
+        dataset_id=f"{tcfg.task_name}_v1",
+        split='validation',
+        max_eval_examples=16,
+        batch_size=max(2, tcfg.batch_size),
+        num_workers=0,
+        max_seq_length=tcfg.max_seq_len,
+        eval_interval_steps=100,
+        eval_on_start=True,
+    )
+
+    return tcfg, task, ecfg
