@@ -42,7 +42,7 @@ Architecture:
 """
 
 from dataclasses import dataclass, asdict, field
-from typing import Optional, Literal, Dict, Tuple, Any
+from typing import Optional, Literal, Dict, Tuple, Any, Union, List
 import json
 import logging
 from datetime import datetime
@@ -143,6 +143,16 @@ class TrainingConfig:
     gradient_accumulation_steps: int = 1
     early_stopping_patience: int = 5
     validation_split: float = 0.1
+
+    # === Distributed / Precision Settings ===
+    # Lightning strategy: "auto", "ddp", "fsdp_native", or None for vanilla
+    strategy: Optional[str] = "auto"
+    # Devices can be an int, "auto", a list of ints, or None
+    devices: Optional[Union[int, str, List[int]]] = "auto"
+    num_nodes: int = 1
+    accumulate_grad_batches: int = 1
+    # Precision string passed to Lightning; mapped downstream to AMP utilities
+    precision: str = "bf16-mixed"
 
     # === Model Architecture ===
     model_name: str = "custom-transformer"

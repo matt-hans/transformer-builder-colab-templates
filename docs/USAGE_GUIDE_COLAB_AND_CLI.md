@@ -56,6 +56,48 @@
 
 - The CLI reuses the same internal APIs as notebooks and supports loading `model.py` from a local path or a fetched gist.
 
+## Distributed Training (DDP/FSDP)
+
+Distributed training options are exposed via `TrainingConfig` fields and the
+CLI JSON configs.
+
+### Config Fields
+
+- `strategy`: Lightning strategy string, e.g. `"auto"`, `"ddp"`, `"fsdp_native"`.
+- `devices`: Number of devices (e.g. `2`), `"auto"` for all visible devices, or a list of device IDs.
+- `num_nodes`: Number of nodes (default `1`).
+- `accumulate_grad_batches`: Gradient accumulation steps; effective batch size is `batch_size * accumulate_grad_batches`.
+- `precision`: Precision string passed to Lightning (e.g. `"bf16-mixed"`, `"16-mixed"`, `"32"`).
+
+### Example DDP Config
+
+File: `configs/example_train_ddp.json`
+
+```json
+{
+  "task_name": "lm_tiny",
+  "learning_rate": 5e-5,
+  "batch_size": 4,
+  "epochs": 1,
+  "strategy": "ddp",
+  "devices": "auto",
+  "num_nodes": 1,
+  "precision": "bf16-mixed",
+  "accumulate_grad_batches": 2,
+  "use_amp": true
+}
+```
+
+Run:
+
+```bash
+python -m cli.run_training --config configs/example_train_ddp.json
+```
+
+On single-GPU systems, Lightning will still run but effectively use a single
+device. If `pytorch_lightning` is not installed, the CLI falls back to the
+adapter-first stub training loop.
+
 ### Export Tier (Tier 4)
 
 Tier 4 validates exported models (TorchScript/ONNX) against the PyTorch

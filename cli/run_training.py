@@ -1,7 +1,7 @@
 import argparse
 import json
 from utils.training import TrainingConfig, build_task_spec, build_eval_config
-from utils.training.training_core import run_training
+from utils.training.training_core import run_training, TrainingCoordinator
 from utils.adapters import DecoderOnlyLMAdapter
 from utils.adapters.gist_loader import load_gist_model
 from utils.training.experiment_db import ExperimentDB
@@ -61,6 +61,13 @@ def run_from_config(cfg: dict) -> dict:
         vocab_size=int(cfg.get('vocab_size', 101)),
         max_seq_len=int(cfg.get('max_seq_len', 16)),
         learning_rate=float(cfg.get('learning_rate', 5e-4)),
+        # Distributed / precision settings (optional)
+        strategy=cfg.get('strategy', "auto"),
+        devices=cfg.get('devices', "auto"),
+        num_nodes=int(cfg.get('num_nodes', 1)),
+        accumulate_grad_batches=int(cfg.get('accumulate_grad_batches', 1)),
+        precision=str(cfg.get('precision', "bf16-mixed")),
+        gradient_accumulation_steps=int(cfg.get('gradient_accumulation_steps', cfg.get('accumulate_grad_batches', 1))),
     )
     if 'task_name' in cfg:
         cfg_obj.task_name = cfg['task_name']
@@ -83,7 +90,32 @@ def run_from_config(cfg: dict) -> dict:
         })
     adapter = DecoderOnlyLMAdapter()
     model = _load_model_from_cfg(cfg)
-    out = run_training(model, adapter, cfg_obj, task, eval_cfg)
+
+    # If Lightning/TrainingCoordinator is available, prefer it for full training;
+    # otherwise fall back to adapter-first stub loop.
+    try:
+        coordinator = TrainingCoordinator(
+            output_dir=cfg.get('output_dir', './training_output'),
+            use_gpu=bool(cfg.get('use_gpu', True)),
+            precision="16" if cfg_obj.use_amp else "32",
+            gradient_clip_val=float(cfg.get('max_grad_norm', cfg_obj.max_grad_norm)),
+            strategy=cfg_obj.strategy,
+            devices=cfg_obj.devices,
+            num_nodes=cfg_obj.num_nodes,
+        )
+        out = coordinator.train(
+            model=model,
+            dataset=cfg_obj.dataset_name,
+            config_name=None,
+            vocab_size=cfg_obj.vocab_size,
+            batch_size=cfg_obj.batch_size,
+            max_length=cfg_obj.max_seq_len,
+            learning_rate=cfg_obj.learning_rate,
+            max_epochs=cfg_obj.epochs,
+            accumulate_grad_batches=cfg_obj.accumulate_grad_batches,
+        )
+    except ImportError:
+        out = run_training(model, adapter, cfg_obj, task, eval_cfg)
     # Optional DB logging if requested
     if cfg.get('log_to_db'):
         db = ExperimentDB(cfg.get('db_path', 'experiments.db'))

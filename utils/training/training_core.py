@@ -10,19 +10,21 @@ One function to rule them all with smart defaults and automatic configuration.
 import os
 from pathlib import Path
 from typing import Optional, Union, Dict, Any, Literal, List
+
 import torch
-# Optional dependency - only needed for Tier 3
+
+# Optional dependency - only needed for Tier 3 / distributed training
 try:
     import pytorch_lightning as pl
     HAS_LIGHTNING = True
-except ImportError:
-    pl = None
+except ImportError:  # pragma: no cover - graceful degradation path
+    pl = None  # type: ignore[assignment]
     HAS_LIGHTNING = False
 
 if HAS_LIGHTNING:
     from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
     from pytorch_lightning.loggers import TensorBoardLogger
-else:
+else:  # pragma: no cover - fallback types when Lightning is absent
     # Lightweight dummies to avoid import errors when Lightning isn't installed
     EarlyStopping = LearningRateMonitor = ModelCheckpoint = object  # type: ignore
     TensorBoardLogger = object  # type: ignore
@@ -76,11 +78,16 @@ class TrainingCoordinator:
         ... )
     """
 
-    def __init__(self,
-                 output_dir: str = './training_output',
-                 use_gpu: bool = True,
-                 precision: Literal['32', '16', 'bf16'] = '16',
-                 gradient_clip_val: float = 1.0):
+    def __init__(
+        self,
+        output_dir: str = './training_output',
+        use_gpu: bool = True,
+        precision: Literal['32', '16', 'bf16'] = '16',
+        gradient_clip_val: float = 1.0,
+        strategy: Optional[str] = "auto",
+        devices: Optional[Union[int, str, List[int]]] = None,
+        num_nodes: int = 1,
+    ):
         """
         Initialize training coordinator.
 
@@ -89,6 +96,9 @@ class TrainingCoordinator:
             use_gpu: Use GPU if available
             precision: Training precision ('32', '16', 'bf16')
             gradient_clip_val: Gradient clipping value
+            strategy: Lightning strategy string (\"auto\", \"ddp\", \"fsdp_native\", etc.)
+            devices: Device spec passed to Lightning Trainer (int, \"auto\", or list of IDs)
+            num_nodes: Number of nodes for multi-node training
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -96,6 +106,11 @@ class TrainingCoordinator:
         self.use_gpu = use_gpu
         self.precision = precision
         self.gradient_clip_val = gradient_clip_val
+
+        # Lightning trainer configuration (DT-01)
+        self.strategy = strategy
+        self.devices = devices
+        self.num_nodes = num_nodes
 
         # Subdirectories
         self.checkpoint_dir = self.output_dir / 'checkpoints'
@@ -360,14 +375,25 @@ class TrainingCoordinator:
         print("\n🏃 Step 6: Starting Training")
         print("-" * 80)
 
-        # Determine accelerator
+        if not HAS_LIGHTNING:
+            raise ImportError(
+                "TrainingCoordinator requires pytorch_lightning for full training. "
+                "Please install pytorch_lightning or use adapter-first run_training() for a vanilla loop."
+            )
+
+        # Determine accelerator and devices for Lightning
         accelerator = 'auto' if self.use_gpu else 'cpu'
-        devices = 'auto' if self.use_gpu else 1
+        if self.devices is not None:
+            trainer_devices = self.devices
+        else:
+            trainer_devices = 'auto' if self.use_gpu else 1
 
         trainer = pl.Trainer(
             max_epochs=max_epochs,
             accelerator=accelerator,
-            devices=devices,
+            devices=trainer_devices,
+            strategy=self.strategy,
+            num_nodes=self.num_nodes,
             precision=effective_precision,
             gradient_clip_val=self.gradient_clip_val,
             accumulate_grad_batches=accumulate_grad_batches,

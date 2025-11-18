@@ -1042,6 +1042,90 @@ def export_model(
     return results
 
 
+def load_exported_model(
+    export_dir: Union[Path, str],
+    runtime: Literal["torchscript", "onnx"] = "torchscript",
+) -> Any:
+    """
+    Load an exported model from export_dir for serving.
+
+    Args:
+        export_dir: Directory containing exported artifacts (model.* and metadata.json).
+        runtime: Runtime to use: \"torchscript\" or \"onnx\".
+
+    Returns:
+        Callable that maps an input tensor to an output tensor (logits).
+
+    Notes:
+        - For TorchScript, the callable expects a ``torch.Tensor`` input matching
+          the model's expected shape (e.g., [B, T] for text or [B, C, H, W] for vision).
+        - For ONNX, onnxruntime must be installed; the wrapper accepts a
+          ``torch.Tensor`` or NumPy array and returns a ``torch.Tensor``.
+    """
+    export_root = Path(export_dir)
+    metadata_path = export_root / "metadata.json"
+    metadata: Dict[str, Any] = {}
+    if metadata_path.exists():
+        try:
+            with metadata_path.open("r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except Exception:
+            metadata = {}
+
+    if runtime == "torchscript":
+        model_path = export_root / "model.torchscript.pt"
+        if not model_path.exists():
+            raise FileNotFoundError(f"TorchScript model not found at {model_path}")
+        scripted = torch.jit.load(str(model_path), map_location=torch.device("cpu"))
+        scripted.eval()
+
+        def _predict_torchscript(x: Any) -> torch.Tensor:
+            with torch.no_grad():
+                if not isinstance(x, torch.Tensor):
+                    x_tensor = torch.as_tensor(x)
+                else:
+                    x_tensor = x
+                out = scripted(x_tensor)
+                if isinstance(out, torch.Tensor):
+                    return out
+                if isinstance(out, tuple) and out and isinstance(out[0], torch.Tensor):
+                    return out[0]
+                if isinstance(out, dict):
+                    logits = out.get("logits")
+                    if isinstance(logits, torch.Tensor):
+                        return logits
+                raise ValueError("Unable to extract tensor output from TorchScript model.")
+
+        return _predict_torchscript
+
+    if runtime == "onnx":
+        try:
+            import onnxruntime as ort  # type: ignore[import]
+        except Exception as exc:
+            raise RuntimeError("onnxruntime is required to load ONNX models.") from exc
+
+        model_path = export_root / "model.onnx"
+        if not model_path.exists():
+            raise FileNotFoundError(f"ONNX model not found at {model_path}")
+
+        session = ort.InferenceSession(str(model_path))
+        input_name = session.get_inputs()[0].name
+
+        def _predict_onnx(x: Any) -> torch.Tensor:
+            if isinstance(x, torch.Tensor):
+                arr = x.detach().cpu().numpy()
+            else:
+                import numpy as np
+
+                arr = np.asarray(x)
+            outputs = session.run(None, {input_name: arr})
+            return torch.from_numpy(outputs[0])
+
+        return _predict_onnx
+
+    raise ValueError(f"Unsupported runtime '{runtime}'. Expected 'torchscript' or 'onnx'.")
+
+
 def create_repro_bundle(
     run_id: str,
     training_config,
