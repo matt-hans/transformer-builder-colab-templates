@@ -1,0 +1,11 @@
+{
+  "task_name": "lm_tiny",
+  "modality": "text",
+  "tier": "4",
+  "export": {
+    "formats": ["torchscript", "onnx", "pytorch"],
+    "quantization": null,
+    "export_dir": "exports/lm_tiny"
+  }
+}
+

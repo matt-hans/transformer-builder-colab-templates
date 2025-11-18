@@ -1,0 +1,26 @@
+{
+  "task_type": "lm",
+  "modality": "text",
+  "input_shape": {
+    "batch": 1,
+    "schema": {
+      "max_seq_len": 128,
+      "vocab_size": 101
+    }
+  },
+  "output_shape": [
+    1,
+    128,
+    101
+  ],
+  "exported_at": "2025-11-18T16:18:09.794999",
+  "framework_versions": {
+    "torch": "2.9.1"
+  },
+  "formats": [
+    "torchscript",
+    "onnx",
+    "pytorch"
+  ],
+  "quantization": null
+}

@@ -56,6 +56,54 @@
 
 - The CLI reuses the same internal APIs as notebooks and supports loading `model.py` from a local path or a fetched gist.
 
+### Export Tier (Tier 4)
+
+Tier 4 validates exported models (TorchScript/ONNX) against the PyTorch
+reference implementation and reports parity/latency metrics.
+
+1. Create or use the example export config:
+
+```json
+{
+  "task_name": "lm_tiny",
+  "modality": "text",
+  "tier": "4",
+  "export": {
+    "formats": ["torchscript", "onnx", "pytorch"],
+    "quantization": null,
+    "export_dir": "exports/lm_tiny"
+  }
+}
+```
+
+2. Run the export + validation pipeline:
+
+```bash
+python -m cli.run_tiers --config configs/example_tiers_export.json
+```
+
+This will:
+
+- Build a `TrainingConfig` and `TaskSpec` for `task_name`.
+- Instantiate a stub model (LMStub for text, SimpleCNN for vision) plus the
+  appropriate adapter.
+- Export the model via `export_model` to the requested formats.
+- Run Tier 4 export validation (`run_tier4_export_validation`) and print:
+  - Status per format (ok/warn/fail).
+  - Max absolute difference and latency in ms.
+  - Paths to exported artifacts.
+
+3. JSON output for CI/CD:
+
+```bash
+python -m cli.run_tiers --config configs/example_tiers_export.json --json
+```
+
+This prints a JSON object containing:
+
+- `export`: mapping of format names to artifact paths.
+- `tier4`: structured validation results (status, per-format metrics).
+
 ## How to Run Vision Tasks (Tier 1)
 
 Vision tasks use the same CLI entrypoint as text tasks, but with a different

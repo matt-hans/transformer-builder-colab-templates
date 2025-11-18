@@ -39,6 +39,7 @@ from .tier3_training_utilities import (
     test_hyperparameter_search,
     test_benchmark_comparison,
 )
+from .training.tier4_export_validation import run_tier4_export_validation
 
 # Import for utility functions
 import torch.nn as nn
@@ -60,6 +61,8 @@ __all__ = [
     'test_fine_tuning',
     'test_hyperparameter_search',
     'test_benchmark_comparison',
+    # Tier 4: Export Validation
+    'run_tier4_export_validation',
     # Utility functions
     'run_all_tier1_tests',
     'run_all_tier2_tests',

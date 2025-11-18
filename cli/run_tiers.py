@@ -3,13 +3,18 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import torch
 import torch.nn as nn
 
-from utils.test_functions import test_shape_robustness, test_gradient_flow
+from utils.test_functions import (
+    test_shape_robustness,
+    test_gradient_flow,
+    run_tier4_export_validation,
+)
 from utils.training import build_task_spec, TrainingConfig
+from utils.training.export_utilities import export_model
 from utils.adapters import DecoderOnlyLMAdapter, VisionClassificationAdapter
 
 
@@ -50,6 +55,7 @@ class SimpleCNN(nn.Module):
 class TiersConfig:
     task_name: str = "lm_tiny"
     mode: str = "FAST_DEV"
+    tier: str | None = None
     vocab_size: int = 101
     max_seq_len: int = 16
     num_classes: int = 4
@@ -59,6 +65,7 @@ class TiersConfig:
         return TiersConfig(
             task_name=str(data.get("task_name", "lm_tiny")),
             mode=str(data.get("mode", "FAST_DEV")),
+            tier=str(data.get("tier")) if data.get("tier") is not None else None,
             vocab_size=int(data.get("vocab_size", 101)),
             max_seq_len=int(data.get("max_seq_len", 16)),
             num_classes=int(data.get("num_classes", 4)),
@@ -71,18 +78,30 @@ def _build_training_config(tcfg: TiersConfig) -> TrainingConfig:
     return training_cfg
 
 
-def run_from_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+def _build_stub_model_and_adapter(tiers_cfg: TiersConfig, task: Any) -> tuple[nn.Module, Any]:
     """
-    Minimal, stub-based tiers runner for text and vision tasks.
+    Build a stub model and adapter pair for the given task.
 
-    For text tasks (e.g., lm_tiny) this uses LMStub + DecoderOnlyLMAdapter.
-    For vision tasks (vision_tiny) this uses SimpleCNN + VisionClassificationAdapter.
+    Uses LMStub/DecoderOnlyLMAdapter for text and SimpleCNN/VisionClassificationAdapter for vision.
+    """
+    if getattr(task, "modality", "text") == "vision" and getattr(task, "task_type", None) == "vision_classification":
+        adapter = VisionClassificationAdapter()
+        num_classes = int(task.output_schema.get("num_classes", tiers_cfg.num_classes))
+        model = SimpleCNN(num_classes=num_classes)
+    else:
+        adapter = DecoderOnlyLMAdapter()
+        model = LMStub(vocab_size=tiers_cfg.vocab_size)
+    return model, adapter
+
+
+def run_tier1_from_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Minimal, stub-based tiers runner for text and vision tasks (Tier 1).
     """
     tiers_cfg = TiersConfig.from_dict(cfg)
     training_cfg = _build_training_config(tiers_cfg)
     task = build_task_spec(training_cfg)
 
-    # Shared config namespace for Tier 1 tests
     config_ns = SimpleNamespace(
         vocab_size=tiers_cfg.vocab_size,
         max_seq_len=tiers_cfg.max_seq_len,
@@ -90,12 +109,7 @@ def run_from_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
         image_size=task.input_schema.get("image_size", [3, 32, 32]),
     )
 
-    if task.modality == "vision" and task.task_type == "vision_classification":
-        adapter = VisionClassificationAdapter()
-        model = SimpleCNN(num_classes=int(task.output_schema.get("num_classes", tiers_cfg.num_classes)))
-    else:
-        adapter = DecoderOnlyLMAdapter()
-        model = LMStub(vocab_size=tiers_cfg.vocab_size)
+    model, adapter = _build_stub_model_and_adapter(tiers_cfg, task)
 
     tier1 = {
         "shape": test_shape_robustness(model, config_ns, adapter=adapter, task_spec=task),
@@ -104,9 +118,73 @@ def run_from_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return {"tier1": "ok", "details": tier1}
 
 
+def _validate_export_config(export_cfg: Dict[str, Any]) -> None:
+    """Basic schema validation for export config with clear error messages."""
+    if not isinstance(export_cfg, dict):
+        raise ValueError("Config field 'export' must be an object/dict.")
+
+    formats = export_cfg.get("formats", ["torchscript", "onnx"])
+    if not isinstance(formats, list) or not all(isinstance(f, str) for f in formats):
+        raise ValueError("Config field 'export.formats' must be a list of strings, e.g. [\"torchscript\", \"onnx\"].")
+
+    quant = export_cfg.get("quantization")
+    if quant is not None and quant not in ("dynamic", "static"):
+        raise ValueError("Config field 'export.quantization' must be one of null, \"dynamic\", or \"static\".")
+
+
+def run_export_from_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Run Tier 4 export + validation pipeline from config.
+    """
+    tiers_cfg = TiersConfig.from_dict(cfg)
+    training_cfg = _build_training_config(tiers_cfg)
+    task = build_task_spec(training_cfg)
+
+    # Align TaskSpec schemas with stub model configuration for safe dummy inputs
+    if getattr(task, "modality", "text") == "text":
+        # Ensure dummy vocab/length do not exceed stub embedding size
+        task.input_schema["vocab_size"] = int(tiers_cfg.vocab_size)
+        task.input_schema.setdefault("max_seq_len", int(tiers_cfg.max_seq_len))
+
+    model, adapter = _build_stub_model_and_adapter(tiers_cfg, task)
+
+    export_cfg = cfg.get("export", {})
+    _validate_export_config(export_cfg)
+    export_dir = export_cfg.get("export_dir", f"exports/{tiers_cfg.task_name}")
+    formats: List[str] = export_cfg.get("formats", ["torchscript", "onnx"])
+    quantization = export_cfg.get("quantization")
+
+    export_paths = export_model(
+        model=model,
+        adapter=adapter,
+        task_spec=task,
+        export_dir=export_dir,
+        formats=formats,
+        quantization=quantization,
+    )
+
+    tier4_results = run_tier4_export_validation(
+        model=model,
+        adapter=adapter,
+        task_spec=task,
+        export_dir=export_dir,
+        num_samples=5,
+        thresholds=None,
+        quantized=bool(quantization),
+    )
+
+    exports_str = {k: str(v) for k, v in export_paths.items()}
+
+    return {
+        "export": exports_str,
+        "tier4": tier4_results,
+    }
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Tier 1/2 tests for LM or vision tasks.")
+    parser = argparse.ArgumentParser(description="Run Tier 1/2/4 tests for LM or vision tasks.")
     parser.add_argument("--config", required=False, help="Path to config JSON (optional)")
+    parser.add_argument("--json", action="store_true", help="Print JSON output instead of human-readable text")
     args = parser.parse_args()
 
     cfg: Dict[str, Any] = {}
@@ -117,8 +195,31 @@ def main() -> None:
         with config_path.open("r", encoding="utf-8") as f:
             cfg = json.load(f)
 
-    out = run_from_config(cfg)
-    print(out)
+    tier = (cfg or {}).get("tier")
+    mode = (cfg or {}).get("mode")
+
+    if tier == "4" or mode == "EXPORT":
+        out = run_export_from_config(cfg)
+    else:
+        out = run_tier1_from_config(cfg)
+
+    if args.json:
+        print(json.dumps(out, indent=2))
+    else:
+        if "tier4" in out:
+            print("\n=== Tier 4 Export Validation ===")
+            print(f"Status: {out['tier4'].get('status')}")
+            for fmt, info in out["tier4"].get("formats", {}).items():
+                print(
+                    f"- {fmt}: status={info.get('status')}, "
+                    f"max_abs_diff={info.get('max_abs_diff'):.3e}, "
+                    f"latency_ms={info.get('latency_ms'):.2f}"
+                )
+            print("\nExported artifacts:")
+            for name, path in out.get("export", {}).items():
+                print(f"- {name}: {path}")
+        else:
+            print(out)
 
 
 if __name__ == "__main__":

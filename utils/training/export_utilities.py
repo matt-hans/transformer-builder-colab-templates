@@ -672,6 +672,60 @@ class TorchScriptExporter:
         }
 
 
+def _generate_dummy_input_from_task(
+    task_spec: "TaskSpec",
+    batch_size: int = 1,
+    device: Optional[torch.device] = None,
+) -> Dict[str, torch.Tensor]:
+    """
+    Generate a dummy input batch from TaskSpec for export.
+
+    Supports:
+        - Text (LM / classification / seq2seq) via input_ids.
+        - Vision classification via pixel_values.
+    """
+    modality = getattr(task_spec, "modality", "text")
+    device = device or torch.device("cpu")
+
+    if modality == "vision" and getattr(task_spec, "task_type", None) == "vision_classification":
+        image_size = task_spec.input_schema.get("image_size", [3, 64, 64])
+        if not isinstance(image_size, (list, tuple)) or len(image_size) != 3:
+            raise ValueError(f"Expected image_size=[C,H,W] in TaskSpec.input_schema, got {image_size!r}")
+        c, h, w = (int(image_size[0]), int(image_size[1]), int(image_size[2]))
+        pixel_values = torch.rand(batch_size, c, h, w, device=device)
+        return {"pixel_values": pixel_values}
+
+    # Default to text-like inputs
+    max_seq_len = int(task_spec.input_schema.get("max_seq_len", 16)) if isinstance(
+        getattr(task_spec, "input_schema", {}), Mapping
+    ) else 16
+    vocab_size = int(task_spec.input_schema.get("vocab_size", 50257)) if isinstance(
+        getattr(task_spec, "input_schema", {}), Mapping
+    ) else 50257
+
+    input_ids = torch.randint(0, vocab_size, (batch_size, max_seq_len), device=device)
+    return {"input_ids": input_ids}
+
+
+def _infer_output_shape(
+    model: nn.Module,
+    adapter: "ModelAdapter",
+    task_spec: "TaskSpec",
+    dummy_batch: Dict[str, torch.Tensor],
+) -> List[int]:
+    """
+    Run a single forward pass via adapter to infer output shape.
+    """
+    model.eval()
+    with torch.no_grad():
+        prepared = adapter.prepare_inputs(dummy_batch, task_spec)
+        _loss, outputs = adapter.forward_for_loss(model, prepared, task_spec)
+        logits = adapter.get_logits(outputs, task_spec)
+        if isinstance(logits, torch.Tensor):
+            return list(logits.shape)
+    return []
+
+
 class ModelCardGenerator:
     """
     Generate HuggingFace-style model cards.
@@ -835,6 +889,157 @@ class ModelCardGenerator:
             print(f"✓ Model card generated: {output_path}")
 
         return card
+
+
+def export_model(
+    model: nn.Module,
+    adapter: "ModelAdapter",
+    task_spec: "TaskSpec",
+    export_dir: Union[Path, str],
+    formats: List[str] | Tuple[str, ...] = ("torchscript", "onnx", "pytorch"),
+    quantization: Optional[Literal["dynamic", "static"]] = None,
+) -> Dict[str, Path]:
+    """
+    Export a model to multiple deployment-ready formats with metadata.
+
+    Args:
+        model: Trained PyTorch model to export.
+        adapter: Task-aware ModelAdapter used for forward/inference.
+        task_spec: TaskSpec describing modality, task_type, and schemas.
+        export_dir: Directory where export artifacts will be written.
+        formats: List of formats to export: \"torchscript\", \"onnx\", \"pytorch\".
+        quantization: Optional quantization mode (\"dynamic\" or \"static\").
+
+    Returns:
+        Dict mapping format names to output Paths, including a \"metadata\" key.
+
+    Example:
+        >>> paths = export_model(
+        ...     model,
+        ...     adapter,
+        ...     task_spec,
+        ...     export_dir=\"./exports/lm_run42\",
+        ...     formats=[\"torchscript\", \"onnx\", \"pytorch\"],
+        ... )
+        >>> print(paths[\"torchscript\"], paths[\"onnx\"], paths[\"metadata\"])
+    """
+    export_root = Path(export_dir)
+    export_root.mkdir(parents=True, exist_ok=True)
+
+    # Prepare dummy input from TaskSpec
+    device = next(model.parameters()).device
+    dummy_batch = _generate_dummy_input_from_task(task_spec, batch_size=1, device=device)
+    output_shape = _infer_output_shape(model, adapter, task_spec, dummy_batch)
+
+    results: Dict[str, Path] = {}
+
+    # Optional quantization (safe default: dynamic only)
+    export_model_obj: nn.Module = model
+    if quantization is not None:
+        # Static quantization setups are environment-specific; recommend dynamic.
+        if quantization == "dynamic":
+            try:
+                export_model_obj = torch.quantization.quantize_dynamic(
+                    model,
+                    {nn.Linear},
+                    dtype=torch.qint8,
+                )
+                print("✅ Applied dynamic quantization to Linear layers.")
+            except Exception as exc:
+                print(f"⚠️  Dynamic quantization failed, exporting non-quantized model: {exc}")
+                export_model_obj = model
+        elif quantization == "static":
+            # Static quantization is intentionally conservative here.
+            print("⚠️  Static quantization is not fully configured; exporting non-quantized model.")
+            export_model_obj = model
+
+    # TorchScript export
+    if "torchscript" in formats:
+        ts_path = export_root / "model.torchscript.pt"
+        ts_exporter = TorchScriptExporter(validate=False, benchmark=False)
+
+        # For text models, TorchScriptExporter expects vocab_size/max_seq_len;
+        # for vision models we approximate with small dummy values.
+        if getattr(task_spec, "modality", "text") == "vision":
+            vocab_size = 8
+            max_seq_len = 16
+        else:
+            vocab_size = int(task_spec.input_schema.get("vocab_size", 50257))
+            max_seq_len = int(task_spec.input_schema.get("max_seq_len", 16))
+
+        ts_exporter.export(
+            export_model_obj,
+            output_path=ts_path,
+            vocab_size=vocab_size,
+            max_seq_len=max_seq_len,
+        )
+        results["torchscript"] = ts_path
+
+    # ONNX export
+    if "onnx" in formats:
+        onnx_path = export_root / "model.onnx"
+        onnx_exporter = ONNXExporter(optimize=False, validate=False, benchmark=False)
+
+        try:
+            modality = getattr(task_spec, "modality", "text")
+            if modality == "vision" and getattr(task_spec, "task_type", None) == "vision_classification":
+                image_size = task_spec.input_schema.get("image_size", [3, 64, 64])
+                if not isinstance(image_size, (list, tuple)) or len(image_size) != 3:
+                    raise ValueError(f"Expected image_size=[C,H,W] in TaskSpec.input_schema, got {image_size!r}")
+                c, h, w = (int(image_size[0]), int(image_size[1]), int(image_size[2]))
+                _ = torch.rand(1, c, h, w, device=device)
+                onnx_exporter.export(
+                    export_model_obj,
+                    output_path=onnx_path,
+                    vocab_size=1,
+                    max_seq_len=1,
+                    batch_size=1,
+                    dynamic_axes=False,
+                    input_names=["pixel_values"],
+                    output_names=["logits"],
+                )
+            else:
+                vocab_size = int(task_spec.input_schema.get("vocab_size", 50257))
+                max_seq_len = int(task_spec.input_schema.get("max_seq_len", 16))
+                onnx_exporter.export(
+                    export_model_obj,
+                    output_path=onnx_path,
+                    vocab_size=vocab_size,
+                    max_seq_len=max_seq_len,
+                )
+            results["onnx"] = onnx_path
+        except Exception as exc:
+            print(f"⚠️  ONNX export skipped due to error: {exc}")
+
+    # PyTorch state dict export
+    if "pytorch" in formats:
+        state_dict_dir = export_root / "pytorch"
+        state_dict_dir.mkdir(parents=True, exist_ok=True)
+        export_state_dict(export_model_obj, output_dir=state_dict_dir)
+        results["pytorch"] = state_dict_dir / "pytorch_model.bin"
+
+    # Metadata manifest
+    metadata = {
+        "task_type": getattr(task_spec, "task_type", None),
+        "modality": getattr(task_spec, "modality", None),
+        "input_shape": {
+            "batch": 1,
+            "schema": getattr(task_spec, "input_schema", {}),
+        },
+        "output_shape": output_shape,
+        "exported_at": datetime.now().isoformat(),
+        "framework_versions": {
+            "torch": torch.__version__,
+        },
+        "formats": list(formats),
+        "quantization": quantization,
+    }
+    metadata_path = export_root / "metadata.json"
+    with metadata_path.open("w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
+    results["metadata"] = metadata_path
+
+    return results
 
 
 def create_repro_bundle(

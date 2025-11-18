@@ -1,0 +1,12 @@
+{
+  "export_date": "2025-11-18T16:18:09.794659",
+  "final_metrics": {},
+  "total_params": 6565,
+  "framework": "PyTorch",
+  "pytorch_version": "2.9.1",
+  "files": [
+    "pytorch_model.bin",
+    "config.json",
+    "metadata.json"
+  ]
+}
