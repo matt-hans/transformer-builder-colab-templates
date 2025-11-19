@@ -13,6 +13,8 @@ DEFAULT_IGNORES_EXACT = {
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
     ".coverage", "htmlcov", ".tox", ".eggs", "dist", "build",
     "site-packages", ".cache", ".local",
+    # Archive directories
+    "archive", "archives",
     # Jupyter
     ".ipynb_checkpoints", ".jupyter",
     # Node.js
@@ -42,6 +44,10 @@ DEFAULT_IGNORES_PATTERNS = [
     ".coverage.*", ".pytest_cache", ".hypothesis",
     # Temporary files
     "*.tmp", "*.temp", "*.log",
+    # Archive files
+    "*.zip", "*.tar", "*.tar.gz", "*.tgz", "*.tar.bz2", "*.tbz2", "*.tar.xz", "*.txz",
+    "*.gz", "*.bz2", "*.xz", "*.rar", "*.7z", "*.cab", "*.deb", "*.rpm",
+    "*.dmg", "*.iso", "*.whl",
 ]
 
 def should_ignore(name: str, exact_ignores: set = None, pattern_ignores: list = None) -> bool:
