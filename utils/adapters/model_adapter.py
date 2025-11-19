@@ -852,13 +852,25 @@ if HAS_LIGHTNING:
             learning_rate: Learning rate for optimizer
         """
         super().__init__()
-        self.model = generated_model
         self.config = config
         self.tokenizer = tokenizer
         self.learning_rate = learning_rate
 
-        # Analyze model signature
+        # Analyze model signature BEFORE compilation (important!)
         self.inspector = ModelSignatureInspector(generated_model)
+
+        # Apply torch.compile if configured (v3.5.0)
+        # Compile AFTER signature inspection but BEFORE executor initialization
+        if hasattr(config, 'compile_mode') and config.compile_mode is not None:
+            compiled_model = self._compile_model(
+                generated_model,
+                mode=config.compile_mode,
+                fullgraph=getattr(config, 'compile_fullgraph', False),
+                dynamic=getattr(config, 'compile_dynamic', True)
+            )
+            self.model = compiled_model
+        else:
+            self.model = generated_model
 
         # Initialize executor if model has complex signature
         self.executor = None
@@ -867,6 +879,44 @@ if HAS_LIGHTNING:
 
         # Save hyperparameters (excluding non-serializable objects)
         self.save_hyperparameters(ignore=['generated_model', 'tokenizer', 'config'])
+
+    def _compile_model(self, model: nn.Module, mode: str, fullgraph: bool, dynamic: bool) -> nn.Module:
+        """
+        Apply torch.compile with error handling and fallback.
+
+        Args:
+            model: Model to compile
+            mode: Compilation mode ("default", "reduce-overhead", "max-autotune")
+            fullgraph: If True, require single graph (stricter, may fail)
+            dynamic: If True, support dynamic shapes (safer for variable seq lengths)
+
+        Returns:
+            Compiled model, or original model if compilation fails
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            # Check if torch.compile is available (PyTorch >= 2.0)
+            if not hasattr(torch, 'compile'):
+                logger.warning(
+                    "torch.compile not available (PyTorch < 2.0). "
+                    "Skipping compilation. Upgrade to PyTorch 2.0+ for compilation support."
+                )
+                return model
+
+            logger.info(f"Compiling model with mode={mode}, fullgraph={fullgraph}, dynamic={dynamic}")
+            compiled = torch.compile(model, mode=mode, fullgraph=fullgraph, dynamic=dynamic)
+            logger.info("✅ Model compilation successful")
+            return compiled
+
+        except Exception as e:
+            logger.warning(
+                f"⚠️  Model compilation failed: {e}. "
+                f"Continuing with uncompiled model. "
+                f"This is expected for models with exotic operations or dynamic control flow."
+            )
+            return model
 
     def forward(self,
                 input_ids: torch.Tensor,

@@ -50,14 +50,16 @@ class MetricsTracker:
         >>> best_epoch = tracker.get_best_epoch('val/loss', 'min')
     """
 
-    def __init__(self, use_wandb: bool = True):
+    def __init__(self, use_wandb: bool = True, gradient_accumulation_steps: int = 1):
         """
         Initialize metrics tracker.
 
         Args:
             use_wandb: Whether to enable W&B logging (default: True)
+            gradient_accumulation_steps: Number of gradient accumulation steps for effective step calculation (default: 1)
         """
         self.use_wandb = use_wandb
+        self.gradient_accumulation_steps = gradient_accumulation_steps
         self.metrics_history = []
         self._step_metrics = []  # Store per-step scalar metrics
         self._global_step = 0    # Auto-increment counter for step
@@ -141,7 +143,8 @@ class MetricsTracker:
         self,
         metric_name: str,
         value: float,
-        step: Optional[int] = None
+        step: Optional[int] = None,
+        commit: bool = True
     ) -> None:
         """
         Log a scalar metric at a specific training step.
@@ -153,22 +156,26 @@ class MetricsTracker:
         Uses threading.Lock() to prevent race conditions when multiple threads
         log metrics concurrently.
 
+        When gradient_accumulation_steps > 1, calculates effective_step = step // gradient_accumulation_steps
+        and only commits to W&B at accumulation boundaries to reduce log volume.
+
         Args:
             metric_name: Metric identifier (e.g., 'train/learning_rate', 'gpu/memory_mb').
                          Must be non-empty string.
             value: Numeric value to log. Must be int or float.
             step: Training step/batch index. If None, auto-increments internal counter.
+            commit: Whether to commit to W&B (only applies when step is at accumulation boundary).
 
         Raises:
             ValueError: If metric_name is empty or value is non-numeric
 
         Examples:
-            >>> tracker = MetricsTracker(use_wandb=True)
+            >>> tracker = MetricsTracker(use_wandb=True, gradient_accumulation_steps=4)
             >>> # Log per-batch metrics in training loop
             >>> for batch_idx, batch in enumerate(dataloader):
             ...     loss = train_batch(batch)
             ...     tracker.log_scalar('train/batch_loss', loss.item(), step=batch_idx)
-            ...     tracker.log_scalar('train/lr', optimizer.param_groups[0]['lr'], step=batch_idx)
+            ...     # W&B commit only happens at steps 0, 4, 8, ... (75% reduction)
             ...
             >>> # Auto-increment step if not provided
             >>> tracker.log_scalar('gpu/memory_mb', 8192.5)  # step=0
@@ -186,19 +193,26 @@ class MetricsTracker:
                 step = self._global_step
                 self._global_step += 1
 
-        # Log to W&B
+        # Calculate effective step (optimizer updates)
+        effective_step = step // self.gradient_accumulation_steps
+
+        # Determine if we should commit to W&B (only at accumulation boundaries)
+        should_commit = commit and (step % self.gradient_accumulation_steps == 0)
+
+        # Log to W&B with effective step
         if self.use_wandb:
             try:
                 import wandb
-                wandb.log({metric_name: value}, step=step)
+                wandb.log({metric_name: value}, step=effective_step, commit=should_commit)
             except ImportError:
                 # W&B not available, skip silently
                 pass
 
-        # Store internally for later retrieval
+        # Store internally for later retrieval (store both step and effective_step)
         with self._lock:
             self._step_metrics.append({
                 'step': step,
+                'effective_step': effective_step,
                 'metric': metric_name,
                 'value': value,
                 'timestamp': datetime.now().isoformat()
@@ -213,23 +227,23 @@ class MetricsTracker:
         debugging training dynamics.
 
         Returns:
-            DataFrame with columns ['step', 'metric', 'value', 'timestamp'],
+            DataFrame with columns ['step', 'effective_step', 'metric', 'value', 'timestamp'],
             sorted by step ascending. Empty DataFrame if no metrics logged.
 
         Examples:
-            >>> tracker = MetricsTracker()
+            >>> tracker = MetricsTracker(gradient_accumulation_steps=4)
             >>> tracker.log_scalar('train/batch_loss', 0.8, step=10)
             >>> tracker.log_scalar('train/batch_loss', 0.5, step=20)
             >>> df = tracker.get_step_metrics()
-            >>> print(df[['step', 'value']])
-               step  value
-            0    10    0.8
-            1    20    0.5
+            >>> print(df[['step', 'effective_step', 'value']])
+               step  effective_step  value
+            0    10               2    0.8
+            1    20               5    0.5
             >>>
-            >>> # Plot training curve
+            >>> # Plot training curve using effective steps
             >>> import matplotlib.pyplot as plt
             >>> loss_df = df[df['metric'] == 'train/batch_loss']
-            >>> plt.plot(loss_df['step'], loss_df['value'])
+            >>> plt.plot(loss_df['effective_step'], loss_df['value'])
         """
         with self._lock:
             df = pd.DataFrame(self._step_metrics)

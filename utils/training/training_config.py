@@ -144,6 +144,11 @@ class TrainingConfig:
     early_stopping_patience: int = 5
     validation_split: float = 0.1
 
+    # === Compilation Settings (v3.5.0) ===
+    compile_mode: Optional[str] = None  # None=disabled, "default"|"reduce-overhead"|"max-autotune"
+    compile_fullgraph: bool = False     # Require single graph (strict, may fail)
+    compile_dynamic: bool = True        # Support dynamic shapes (safer for variable seq lengths)
+
     # === Distributed / Precision Settings ===
     # Lightning strategy: "auto", "ddp", "fsdp_native", or None for vanilla
     strategy: Optional[str] = "auto"
@@ -190,6 +195,11 @@ class TrainingConfig:
     wandb_project: str = "transformer-builder-training"
     wandb_entity: Optional[str] = None
     run_name: Optional[str] = None
+
+    # === Production Inference Artifacts (v3.5) ===
+    export_bundle: bool = False  # Generate full deployment bundle
+    export_formats: List[str] = field(default_factory=lambda: ["onnx", "torchscript"])
+    export_dir: str = "exports"
 
     # === Metadata ===
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())

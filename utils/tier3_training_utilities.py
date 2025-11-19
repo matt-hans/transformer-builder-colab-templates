@@ -544,6 +544,7 @@ def _setup_training(
     use_lr_schedule: bool,
     train_data: Optional[List[torch.Tensor]] = None,
     val_data: Optional[List[torch.Tensor]] = None,
+    gradient_accumulation_steps: int = 1,
 ) -> Dict[str, Any]:
     """
     Setup optimizer, scheduler, dataloaders, scaler, and metrics tracker.
@@ -557,6 +558,7 @@ def _setup_training(
         use_amp, use_wandb,
         random_seed=random_seed,
         use_lr_schedule=use_lr_schedule,
+        gradient_accumulation_steps=gradient_accumulation_steps,
     )
     # Attach model for downstream helpers that expect it
     env['model'] = model
@@ -791,13 +793,15 @@ def _setup_training_environment(
     use_amp: bool,
     use_wandb: bool,
     random_seed: int = 42,
-    use_lr_schedule: bool = True
+    use_lr_schedule: bool = True,
+    gradient_accumulation_steps: int = 1
 ) -> Dict[str, Any]:
     """
     Setup training environment: data, optimizer, scheduler, scaler, metrics tracker.
 
     Args:
         random_seed: Random seed for DataLoader generator (ensures reproducible shuffling)
+        gradient_accumulation_steps: Number of gradient accumulation steps for effective step tracking
 
     Returns:
         Dictionary with all training components
@@ -874,8 +878,11 @@ def _setup_training_environment(
         # Constant LR scheduler (no change) for backward compatibility
         scheduler = LambdaLR(optimizer, lr_lambda=lambda _: 1.0)
 
-    # Initialize metrics tracker
-    metrics_tracker = MetricsTracker(use_wandb=use_wandb)
+    # Initialize metrics tracker with gradient accumulation awareness
+    metrics_tracker = MetricsTracker(
+        use_wandb=use_wandb,
+        gradient_accumulation_steps=gradient_accumulation_steps
+    )
 
     return {
         'device': device,
@@ -1319,6 +1326,7 @@ def test_fine_tuning(
         use_lr_schedule=use_lr_schedule,
         train_data=train_data,
         val_data=val_data,
+        gradient_accumulation_steps=gradient_accumulation_steps,
     )
 
     # Compute effective batch size

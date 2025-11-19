@@ -6,7 +6,8 @@ padding, builds attention masks, and supports causal (GPT) and masked (BERT)
 objectives without requiring transformers at import time.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
+import torch
 
 
 class LanguageModelingDataCollator:
@@ -113,4 +114,131 @@ class LanguageModelingDataCollator:
             labels.append(lbl)
             masked_inputs.append(inp)
         return labels, masked_inputs
+
+
+class VisionDataCollator:
+    """Data collator for vision tasks (classification, multilabel, etc.).
+
+    Handles batching pixel_values tensors and applies normalization in the
+    collate_fn for improved performance compared to per-sample normalization
+    in Dataset.__getitem__.
+
+    Features:
+    - Stacks pixel_values tensors along batch dimension
+    - Per-channel normalization with configurable mean/std
+    - Supports both RGB (3-channel) and grayscale (1-channel) images
+    - Handles optional labels (supports inference mode)
+
+    Args:
+        normalize: Whether to apply normalization. Defaults to True.
+        mean: Per-channel mean for normalization. Defaults to ImageNet mean.
+        std: Per-channel std for normalization. Defaults to ImageNet std.
+    """
+
+    def __init__(
+        self,
+        normalize: bool = True,
+        mean: Optional[Tuple[float, ...]] = None,
+        std: Optional[Tuple[float, ...]] = None
+    ):
+        """Initialize vision data collator.
+
+        Args:
+            normalize: Whether to apply normalization (default: True)
+            mean: Per-channel mean values. Defaults to ImageNet: (0.485, 0.456, 0.406)
+            std: Per-channel std values. Defaults to ImageNet: (0.229, 0.224, 0.225)
+
+        Raises:
+            ValueError: If mean and std have different lengths
+        """
+        self.normalize = normalize
+
+        # Default to ImageNet normalization
+        self.mean = mean or (0.485, 0.456, 0.406)
+        self.std = std or (0.229, 0.224, 0.225)
+
+        if len(self.mean) != len(self.std):
+            raise ValueError(
+                f"mean and std must have same length, got {len(self.mean)} vs {len(self.std)}"
+            )
+
+    def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        """Collate a batch of vision samples.
+
+        Args:
+            batch: List of sample dicts, each containing:
+                - 'pixel_values': Tensor of shape (C, H, W)
+                - 'labels': Optional label (int or tensor)
+
+        Returns:
+            Dictionary with:
+                - 'pixel_values': Tensor of shape (B, C, H, W)
+                - 'labels': Optional tensor of shape (B,) if labels present
+
+        Raises:
+            ValueError: If pixel_values have inconsistent shapes across batch
+        """
+        # Stack pixel values
+        pixel_values_list = [item['pixel_values'] for item in batch]
+
+        # Validate shapes are consistent
+        if len(pixel_values_list) > 1:
+            first_shape = pixel_values_list[0].shape
+            for i, pv in enumerate(pixel_values_list[1:], 1):
+                if pv.shape != first_shape:
+                    raise ValueError(
+                        f"Inconsistent pixel_values shapes in batch: "
+                        f"item 0 has shape {first_shape}, item {i} has shape {pv.shape}"
+                    )
+
+        pixel_values = torch.stack(pixel_values_list)
+
+        # Apply normalization if enabled
+        if self.normalize:
+            pixel_values = self._normalize(pixel_values)
+
+        collated = {'pixel_values': pixel_values}
+
+        # Stack labels if present (optional for inference mode)
+        if 'labels' in batch[0]:
+            labels = torch.tensor([item['labels'] for item in batch], dtype=torch.long)
+            collated['labels'] = labels
+
+        return collated
+
+    def _normalize(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        """Apply per-channel normalization to pixel values.
+
+        Formula: normalized = (pixel_values - mean) / std
+
+        Args:
+            pixel_values: Tensor of shape (B, C, H, W)
+
+        Returns:
+            Normalized tensor of same shape
+        """
+        # pixel_values: [B, C, H, W]
+        # mean/std: broadcast to shape (1, C, 1, 1)
+        num_channels = pixel_values.shape[1]
+
+        # Handle both RGB and grayscale
+        if num_channels == 1:
+            # Grayscale: use first channel of mean/std
+            mean_tensor = torch.tensor([self.mean[0]], device=pixel_values.device, dtype=pixel_values.dtype)
+            std_tensor = torch.tensor([self.std[0]], device=pixel_values.device, dtype=pixel_values.dtype)
+        else:
+            # RGB or multi-channel: use full mean/std
+            if len(self.mean) != num_channels:
+                raise ValueError(
+                    f"Number of channels ({num_channels}) doesn't match "
+                    f"mean length ({len(self.mean)}). Ensure mean/std match image channels."
+                )
+            mean_tensor = torch.tensor(self.mean, device=pixel_values.device, dtype=pixel_values.dtype)
+            std_tensor = torch.tensor(self.std, device=pixel_values.device, dtype=pixel_values.dtype)
+
+        # Reshape for broadcasting: (1, C, 1, 1)
+        mean_tensor = mean_tensor.view(1, -1, 1, 1)
+        std_tensor = std_tensor.view(1, -1, 1, 1)
+
+        return (pixel_values - mean_tensor) / std_tensor
 

@@ -30,6 +30,11 @@
 - Use `utils.adapters.gist_loader.load_gist_model(gist_id, revision)`.
 - Shows owner, files and checksum. Dynamically import `model.py` when present.
 - Log `gist_id`, `revision` and `sha256` to `ExperimentDB` for reproducibility.
+- **Security Warning**: Any external `model.py` (local file or GitHub gist) is
+  executed as Python code. The CLI performs a simple static scan to refuse
+  obviously dangerous patterns (`os.system`, `subprocess.Popen`, etc.), but you
+  **must still review and trust the code** before running it, especially in
+  shared or production environments.
 
 ## CLI
 
@@ -105,6 +110,13 @@ Run:
 
 ```bash
 python -m cli.run_training --config configs/example_train_ddp.json
+```
+
+For multi-GPU setups, you can also launch via `torchrun` to ensure one process
+per GPU:
+
+```bash
+torchrun --nproc_per_node=2 -m cli.run_training --config configs/example_train_ddp.json
 ```
 
 On single-GPU systems, Lightning will still run but effectively use a single
@@ -289,6 +301,43 @@ The JSON output contains:
 - `comparison`: regression comparison (if baseline provided)
 - `drift`: drift analysis (if reference profile provided)
 - `status`: `"ok"`, `"warn"`, or `"fail"` for CI/CD gates
+
+### CI/CD Example (GitHub Actions)
+
+You can wire Tier 5 into CI to block regressions and severe drift:
+
+```yaml
+jobs:
+  tier5-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install -U pip
+          pip install -r requirements.txt
+      - name: Run Tier 5 monitoring
+        run: |
+          . .venv/bin/activate
+          python -m cli.run_tiers --config configs/example_tiers_monitoring.json --json > tier5.json
+          python - << 'PY'
+          import json
+          with open("tier5.json") as f:
+              data = json.load(f)
+          status = data.get("status", "fail")
+          if status == "fail":
+              raise SystemExit("Tier 5 monitoring failed (regression or drift detected).")
+          PY
+```
+
+For more advanced workflows, you can generate the Tier 5 config dynamically
+to compare the latest experiment against a stored “production” run and adjust
+the thresholds inside your model-regression/drift logic accordingly.
 
 ### Using ExperimentDB Profiles
 

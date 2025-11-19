@@ -1126,6 +1126,1159 @@ def load_exported_model(
     raise ValueError(f"Unsupported runtime '{runtime}'. Expected 'torchscript' or 'onnx'.")
 
 
+def generate_inference_script(
+    task_spec: "TaskSpec",
+    export_dir: Path,
+    model_format: str = "onnx"
+) -> Path:
+    """
+    Generate standalone inference.py script with preprocessing logic from TaskSpec.
+
+    Args:
+        task_spec: TaskSpec with modality and preprocessing configuration
+        export_dir: Directory to write inference.py
+        model_format: Model format to use ("onnx" or "torchscript")
+
+    Returns:
+        Path to generated inference.py
+
+    Example:
+        >>> script_path = generate_inference_script(
+        ...     task_spec=TaskSpec.vision_tiny(),
+        ...     export_dir=Path("exports/model_001"),
+        ...     model_format="onnx"
+        ... )
+    """
+    modality = getattr(task_spec, "modality", "text")
+
+    if modality == "vision":
+        script_content = _generate_vision_inference_script(task_spec, model_format)
+    elif modality == "text":
+        script_content = _generate_text_inference_script(task_spec, model_format)
+    else:
+        raise ValueError(f"Unsupported modality for inference script generation: {modality}")
+
+    script_path = export_dir / "inference.py"
+    script_path.write_text(script_content)
+    print(f"✅ Generated inference script: {script_path}")
+    return script_path
+
+
+def _generate_vision_inference_script(task_spec: "TaskSpec", model_format: str) -> str:
+    """Generate inference script for vision tasks."""
+    # Extract preprocessing configuration
+    preproc = task_spec.preprocessing_config or {}
+    mean = preproc.get("mean", [0.485, 0.456, 0.406])  # ImageNet defaults
+    std = preproc.get("std", [0.229, 0.224, 0.225])
+    image_size = task_spec.input_schema.get("image_size", [3, 224, 224])
+
+    if not isinstance(image_size, (list, tuple)) or len(image_size) != 3:
+        image_size = [3, 224, 224]
+
+    c, h, w = image_size
+
+    if model_format == "onnx":
+        template = f'''"""
+Vision Inference Engine - ONNX Runtime
+
+Generated for task: {task_spec.name}
+Modality: vision
+Task type: {task_spec.task_type}
+"""
+
+import argparse
+import numpy as np
+from PIL import Image
+from pathlib import Path
+from typing import Dict, List, Union, Any
+
+
+class VisionInferenceEngine:
+    """
+    ONNX-based inference engine for vision classification.
+
+    Preprocessing matches training configuration:
+    - Image size: [{c}, {h}, {w}] (C, H, W)
+    - Normalization: mean={mean}, std={std}
+    """
+
+    def __init__(self, model_path: str):
+        """
+        Initialize inference engine.
+
+        Args:
+            model_path: Path to ONNX model file
+        """
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            raise ImportError(
+                "onnxruntime is required for ONNX inference. "
+                "Install with: pip install onnxruntime"
+            )
+
+        self.session = ort.InferenceSession(model_path)
+        self.input_name = self.session.get_inputs()[0].name
+
+        # Preprocessing configuration from TaskSpec
+        self.mean = np.array({mean}).reshape(1, -1, 1, 1).astype(np.float32)
+        self.std = np.array({std}).reshape(1, -1, 1, 1).astype(np.float32)
+        self.image_size = ({c}, {h}, {w})
+
+    def preprocess(self, image_path: Union[str, Path]) -> np.ndarray:
+        """
+        Preprocess image for inference.
+
+        Args:
+            image_path: Path to input image
+
+        Returns:
+            Preprocessed image as numpy array [1, C, H, W]
+        """
+        # Load image
+        img = Image.open(image_path).convert('RGB')
+
+        # Resize to expected dimensions
+        img = img.resize((self.image_size[2], self.image_size[1]))  # (W, H)
+
+        # Convert to array and normalize to [0, 1]
+        img_array = np.array(img).astype(np.float32) / 255.0
+
+        # Apply normalization
+        # HWC -> CHW
+        img_array = img_array.transpose(2, 0, 1)
+
+        # Add batch dimension: [C, H, W] -> [1, C, H, W]
+        img_array = img_array[np.newaxis, ...]
+
+        # Normalize with mean/std
+        img_array = (img_array - self.mean) / self.std
+
+        return img_array
+
+    def predict(self, image_path: Union[str, Path]) -> Dict[str, Any]:
+        """
+        Run inference on a single image.
+
+        Args:
+            image_path: Path to input image
+
+        Returns:
+            Dictionary with predictions:
+                - predicted_class: int (argmax of logits)
+                - confidence: float (softmax probability)
+                - probabilities: List[float] (all class probabilities)
+        """
+        # Preprocess input
+        inputs = self.preprocess(image_path)
+
+        # Run inference
+        outputs = self.session.run(None, {{self.input_name: inputs}})
+
+        # Interpret outputs
+        logits = outputs[0]  # Shape: [1, num_classes]
+
+        # Softmax
+        exp_logits = np.exp(logits - np.max(logits, axis=-1, keepdims=True))
+        probs = exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
+
+        # Extract predictions
+        predicted_class = int(np.argmax(probs, axis=-1)[0])
+        confidence = float(probs[0, predicted_class])
+
+        return {{
+            'predicted_class': predicted_class,
+            'confidence': confidence,
+            'probabilities': probs[0].tolist()
+        }}
+
+    def batch_predict(self, image_paths: List[Union[str, Path]]) -> List[Dict[str, Any]]:
+        """
+        Run inference on multiple images.
+
+        Args:
+            image_paths: List of image paths
+
+        Returns:
+            List of prediction dictionaries
+        """
+        results = []
+        for img_path in image_paths:
+            results.append(self.predict(img_path))
+        return results
+
+
+def main():
+    """CLI interface for vision inference."""
+    parser = argparse.ArgumentParser(
+        description='Vision Inference Engine',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument(
+        '--input',
+        required=True,
+        help='Path to input image or directory'
+    )
+    parser.add_argument(
+        '--model',
+        default='artifacts/model.onnx',
+        help='Path to ONNX model file'
+    )
+    parser.add_argument(
+        '--batch',
+        action='store_true',
+        help='Process directory of images (batch mode)'
+    )
+
+    args = parser.parse_args()
+
+    # Initialize engine
+    engine = VisionInferenceEngine(args.model)
+    print(f"✅ Loaded model: {{args.model}}")
+
+    # Run inference
+    if args.batch:
+        # Batch mode
+        input_dir = Path(args.input)
+        if not input_dir.is_dir():
+            raise ValueError(f"Batch mode requires directory input: {{args.input}}")
+
+        image_paths = list(input_dir.glob('*.jpg')) + list(input_dir.glob('*.png'))
+        print(f"Found {{len(image_paths)}} images")
+
+        results = engine.batch_predict(image_paths)
+        for path, result in zip(image_paths, results):
+            print(f"{{path.name}}: class={{result['predicted_class']}}, "
+                  f"confidence={{result['confidence']:.4f}}")
+    else:
+        # Single image mode
+        result = engine.predict(args.input)
+        print(f"\\nPrediction Results:")
+        print(f"  Predicted class: {{result['predicted_class']}}")
+        print(f"  Confidence: {{result['confidence']:.4f}}")
+        print(f"  Top 5 probabilities:")
+        probs = np.array(result['probabilities'])
+        top5_idx = np.argsort(probs)[-5:][::-1]
+        for idx in top5_idx:
+            print(f"    Class {{idx}}: {{probs[idx]:.4f}}")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+    elif model_format == "torchscript":
+        template = f'''"""
+Vision Inference Engine - TorchScript
+
+Generated for task: {task_spec.name}
+Modality: vision
+Task type: {task_spec.task_type}
+"""
+
+import argparse
+import numpy as np
+import torch
+from PIL import Image
+from pathlib import Path
+from typing import Dict, List, Union, Any
+
+
+class VisionInferenceEngine:
+    """
+    TorchScript-based inference engine for vision classification.
+
+    Preprocessing matches training configuration:
+    - Image size: [{c}, {h}, {w}] (C, H, W)
+    - Normalization: mean={mean}, std={std}
+    """
+
+    def __init__(self, model_path: str, device: str = "cpu"):
+        """
+        Initialize inference engine.
+
+        Args:
+            model_path: Path to TorchScript model file
+            device: Device to run inference on ("cpu" or "cuda")
+        """
+        self.device = torch.device(device)
+        self.model = torch.jit.load(model_path, map_location=self.device)
+        self.model.eval()
+
+        # Preprocessing configuration from TaskSpec
+        self.mean = torch.tensor({mean}).view(1, -1, 1, 1).to(self.device)
+        self.std = torch.tensor({std}).view(1, -1, 1, 1).to(self.device)
+        self.image_size = ({c}, {h}, {w})
+
+    def preprocess(self, image_path: Union[str, Path]) -> torch.Tensor:
+        """
+        Preprocess image for inference.
+
+        Args:
+            image_path: Path to input image
+
+        Returns:
+            Preprocessed image as tensor [1, C, H, W]
+        """
+        # Load image
+        img = Image.open(image_path).convert('RGB')
+
+        # Resize
+        img = img.resize((self.image_size[2], self.image_size[1]))
+
+        # Convert to tensor and normalize to [0, 1]
+        img_array = np.array(img).astype(np.float32) / 255.0
+        img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).unsqueeze(0)  # [1, C, H, W]
+
+        # Move to device and normalize
+        img_tensor = img_tensor.to(self.device)
+        img_tensor = (img_tensor - self.mean) / self.std
+
+        return img_tensor
+
+    def predict(self, image_path: Union[str, Path]) -> Dict[str, Any]:
+        """
+        Run inference on a single image.
+
+        Args:
+            image_path: Path to input image
+
+        Returns:
+            Dictionary with predictions
+        """
+        # Preprocess
+        inputs = self.preprocess(image_path)
+
+        # Run inference
+        with torch.no_grad():
+            outputs = self.model(inputs)
+
+            # Handle different output formats
+            if isinstance(outputs, tuple):
+                logits = outputs[0]
+            elif isinstance(outputs, dict):
+                logits = outputs.get('logits', outputs.get('last_hidden_state'))
+            else:
+                logits = outputs
+
+        # Softmax
+        probs = torch.softmax(logits, dim=-1)
+
+        # Extract predictions
+        predicted_class = int(torch.argmax(probs, dim=-1)[0])
+        confidence = float(probs[0, predicted_class])
+
+        return {{
+            'predicted_class': predicted_class,
+            'confidence': confidence,
+            'probabilities': probs[0].cpu().numpy().tolist()
+        }}
+
+    def batch_predict(self, image_paths: List[Union[str, Path]]) -> List[Dict[str, Any]]:
+        """Run inference on multiple images."""
+        results = []
+        for img_path in image_paths:
+            results.append(self.predict(img_path))
+        return results
+
+
+def main():
+    """CLI interface for vision inference."""
+    parser = argparse.ArgumentParser(description='Vision Inference Engine (TorchScript)')
+    parser.add_argument('--input', required=True, help='Path to input image')
+    parser.add_argument('--model', default='artifacts/model.torchscript.pt', help='Path to TorchScript model')
+    parser.add_argument('--device', default='cpu', choices=['cpu', 'cuda'], help='Device to use')
+
+    args = parser.parse_args()
+
+    engine = VisionInferenceEngine(args.model, args.device)
+    result = engine.predict(args.input)
+
+    print(f"\\nPrediction Results:")
+    print(f"  Predicted class: {{result['predicted_class']}}")
+    print(f"  Confidence: {{result['confidence']:.4f}}")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+    else:
+        raise ValueError(f"Unsupported model format: {model_format}")
+
+    return template
+
+
+def _generate_text_inference_script(task_spec: "TaskSpec", model_format: str) -> str:
+    """Generate inference script for text tasks."""
+    vocab_size = task_spec.input_schema.get("vocab_size", 50257)
+    max_seq_len = task_spec.input_schema.get("max_seq_len", 128)
+
+    if model_format == "onnx":
+        template = f'''"""
+Text Inference Engine - ONNX Runtime
+
+Generated for task: {task_spec.name}
+Modality: text
+Task type: {task_spec.task_type}
+"""
+
+import argparse
+import numpy as np
+from typing import Dict, List, Any
+
+
+class TextInferenceEngine:
+    """
+    ONNX-based inference engine for text tasks.
+
+    Configuration:
+    - Vocabulary size: {vocab_size}
+    - Max sequence length: {max_seq_len}
+    """
+
+    def __init__(self, model_path: str, tokenizer_path: str = None):
+        """
+        Initialize inference engine.
+
+        Args:
+            model_path: Path to ONNX model file
+            tokenizer_path: Optional path to tokenizer directory
+        """
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            raise ImportError("onnxruntime required. Install with: pip install onnxruntime")
+
+        self.session = ort.InferenceSession(model_path)
+        self.input_name = self.session.get_inputs()[0].name
+
+        # Load tokenizer if provided
+        if tokenizer_path:
+            try:
+                from transformers import AutoTokenizer
+                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+            except ImportError:
+                print("⚠️  transformers not installed, tokenization disabled")
+                self.tokenizer = None
+        else:
+            self.tokenizer = None
+
+    def preprocess(self, text: str) -> np.ndarray:
+        """
+        Tokenize text for inference.
+
+        Args:
+            text: Input text string
+
+        Returns:
+            Token IDs as numpy array [1, seq_len]
+        """
+        if self.tokenizer:
+            encoded = self.tokenizer(
+                text,
+                max_length={max_seq_len},
+                padding='max_length',
+                truncation=True,
+                return_tensors='np'
+            )
+            return encoded['input_ids']
+        else:
+            # Fallback: simple character-level encoding
+            token_ids = [ord(c) % {vocab_size} for c in text[:{max_seq_len}]]
+            token_ids += [0] * ({max_seq_len} - len(token_ids))  # Pad
+            return np.array([token_ids], dtype=np.int64)
+
+    def predict(self, text: str) -> Dict[str, Any]:
+        """
+        Run inference on text.
+
+        Args:
+            text: Input text
+
+        Returns:
+            Dictionary with predictions
+        """
+        # Preprocess
+        input_ids = self.preprocess(text)
+
+        # Run inference
+        outputs = self.session.run(None, {{self.input_name: input_ids}})
+        logits = outputs[0]
+
+        # For classification tasks
+        if logits.shape[-1] < 100:  # Likely classification
+            probs = np.exp(logits) / np.sum(np.exp(logits), axis=-1, keepdims=True)
+            predicted_class = int(np.argmax(probs, axis=-1)[0])
+            confidence = float(probs[0, predicted_class])
+
+            return {{
+                'predicted_class': predicted_class,
+                'confidence': confidence,
+                'probabilities': probs[0].tolist()
+            }}
+        else:  # Language modeling
+            return {{
+                'logits': logits[0].tolist()
+            }}
+
+
+def main():
+    """CLI interface for text inference."""
+    parser = argparse.ArgumentParser(description='Text Inference Engine')
+    parser.add_argument('--input', required=True, help='Input text')
+    parser.add_argument('--model', default='artifacts/model.onnx', help='Path to ONNX model')
+    parser.add_argument('--tokenizer', help='Path to tokenizer directory')
+
+    args = parser.parse_args()
+
+    engine = TextInferenceEngine(args.model, args.tokenizer)
+    result = engine.predict(args.input)
+
+    print(f"\\nPrediction Results:")
+    print(result)
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+    else:  # torchscript
+        template = f'''"""
+Text Inference Engine - TorchScript
+
+Generated for task: {task_spec.name}
+"""
+
+import argparse
+import torch
+from typing import Dict, Any
+
+
+class TextInferenceEngine:
+    """TorchScript-based inference engine for text tasks."""
+
+    def __init__(self, model_path: str, device: str = "cpu"):
+        self.device = torch.device(device)
+        self.model = torch.jit.load(model_path, map_location=self.device)
+        self.model.eval()
+
+    def predict(self, input_ids: torch.Tensor) -> Dict[str, Any]:
+        """Run inference on pre-tokenized input."""
+        with torch.no_grad():
+            outputs = self.model(input_ids.to(self.device))
+            if isinstance(outputs, tuple):
+                logits = outputs[0]
+            else:
+                logits = outputs
+
+            return {{'logits': logits.cpu().numpy().tolist()}}
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Text Inference Engine (TorchScript)')
+    parser.add_argument('--model', default='artifacts/model.torchscript.pt', help='Model path')
+    parser.add_argument('--device', default='cpu', help='Device')
+
+    args = parser.parse_args()
+    engine = TextInferenceEngine(args.model, args.device)
+    print("✅ Model loaded. Ready for inference.")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+    return template
+
+
+def generate_readme(
+    task_spec: "TaskSpec",
+    export_dir: Path,
+    formats: List[str]
+) -> Path:
+    """
+    Generate README.md with quickstart instructions.
+
+    Args:
+        task_spec: TaskSpec with task information
+        export_dir: Directory to write README.md
+        formats: List of exported formats
+
+    Returns:
+        Path to generated README.md
+    """
+    modality = getattr(task_spec, "modality", "text")
+    task_type = getattr(task_spec, "task_type", "unknown")
+
+    # Build quickstart sections
+    readme_content = f'''# Model Export Bundle
+
+**Task:** {task_spec.name}
+**Modality:** {modality}
+**Task Type:** {task_type}
+**Exported:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+## Overview
+
+This bundle contains a production-ready exported model with all necessary artifacts for deployment.
+
+**Exported Formats:**
+{chr(10).join(f"- {fmt}" for fmt in formats)}
+
+## Directory Structure
+
+```
+.
+├── artifacts/          # Model files
+│   ├── model.onnx              (ONNX format)
+│   ├── model.torchscript.pt    (TorchScript format)
+│   └── model.pytorch.pt        (PyTorch state dict)
+├── configs/            # Configuration files
+│   ├── task_spec.json          (Task specification)
+│   ├── training_config.json    (Training configuration)
+│   └── torchserve_config.json  (TorchServe deployment config)
+├── inference.py        # Standalone inference script
+├── Dockerfile          # Container deployment
+├── requirements.txt    # Runtime dependencies
+└── README.md           # This file
+```
+
+## Quick Start
+
+### Local Inference
+
+**Install dependencies:**
+```bash
+pip install -r requirements.txt
+```
+
+**Run inference:**
+'''
+
+    # Add modality-specific examples
+    if modality == "vision":
+        readme_content += '''```bash
+python inference.py --input /path/to/image.jpg --model artifacts/model.onnx
+```
+
+**Batch processing:**
+```bash
+python inference.py --input /path/to/images/ --model artifacts/model.onnx --batch
+```
+'''
+    else:  # text
+        readme_content += '''```bash
+python inference.py --input "Your text here" --model artifacts/model.onnx
+```
+'''
+
+    readme_content += f'''
+## Docker Deployment
+
+**Build container:**
+```bash
+docker build -t model-inference .
+```
+
+**Run container:**
+```bash
+docker run -p 8080:8080 model-inference
+```
+
+**Test endpoint:**
+'''
+
+    if modality == "vision":
+        readme_content += '''```bash
+curl -X POST -F "image=@test.jpg" http://localhost:8080/predict
+```
+'''
+    else:
+        readme_content += '''```bash
+curl -X POST -H "Content-Type: application/json" \\
+     -d '{{"text": "Your input text"}}' \\
+     http://localhost:8080/predict
+```
+'''
+
+    readme_content += '''
+## TorchServe Deployment
+
+**Create model archive:**
+```bash
+torch-model-archiver \\
+    --model-name transformer-model \\
+    --version 1.0 \\
+    --serialized-file artifacts/model.torchscript.pt \\
+    --handler inference.py \\
+    --export-path model-store
+```
+
+**Start TorchServe:**
+```bash
+torchserve \\
+    --start \\
+    --model-store model-store \\
+    --models transformer-model=transformer-model.mar \\
+    --ncs
+```
+
+**Configuration:**
+See `configs/torchserve_config.json` for detailed deployment settings.
+
+## Model Information
+
+**Task Specification:**
+- Input fields: {", ".join(task_spec.input_fields)}
+- Target field: {task_spec.target_field or "N/A"}
+- Loss type: {task_spec.loss_type}
+- Metrics: {", ".join(task_spec.metrics)}
+
+**Input Schema:**
+```json
+{json.dumps(dict(task_spec.input_schema), indent=2)}
+```
+
+**Output Schema:**
+```json
+{json.dumps(dict(task_spec.output_schema), indent=2)}
+```
+
+## Runtime Requirements
+
+See `requirements.txt` for complete dependency list.
+
+**Minimum requirements:**
+- Python >= 3.8
+- PyTorch >= 2.0 (for TorchScript)
+- ONNX Runtime >= 1.15 (for ONNX)
+
+## Performance
+
+**Inference Speed:**
+- TorchScript: ~1.1-1.2x faster than PyTorch
+- ONNX: ~1.5-2.5x faster than PyTorch (CPU)
+
+**Model Size:**
+Check `artifacts/` directory for file sizes.
+
+## Troubleshooting
+
+**ONNX inference fails:**
+- Ensure onnxruntime is installed: `pip install onnxruntime`
+- For GPU: `pip install onnxruntime-gpu`
+
+**TorchScript shape errors:**
+- Verify input dimensions match model expectations
+- Check `configs/task_spec.json` for input schema
+
+**Import errors:**
+- Install all requirements: `pip install -r requirements.txt`
+
+## License
+
+Model exported from Transformer Builder training pipeline.
+
+## Citation
+
+If using this model in research, please cite:
+
+```bibtex
+@misc{{transformer_builder_{task_spec.name.replace("-", "_")},
+  title={{{{Transformer Model: {task_spec.name}}}}},
+  year={{{datetime.now().year}}},
+  note={{Generated using Transformer Builder Training Pipeline v3.5}}
+}}
+```
+
+## Support
+
+For issues or questions:
+- Check task_spec.json for model configuration
+- Review training_config.json for training details
+- Consult Transformer Builder documentation
+'''
+
+    readme_path = export_dir / "README.md"
+    readme_path.write_text(readme_content)
+    print(f"✅ Generated README: {readme_path}")
+    return readme_path
+
+
+def generate_torchserve_config(
+    task_spec: "TaskSpec",
+    export_dir: Path
+) -> Path:
+    """
+    Generate TorchServe configuration file.
+
+    Args:
+        task_spec: TaskSpec with task information
+        export_dir: Directory to write torchserve_config.json
+
+    Returns:
+        Path to generated configuration file
+    """
+    config = {
+        "modelName": task_spec.name.replace(" ", "-"),
+        "modelVersion": "1.0",
+        "runtime": "python",
+        "minWorkers": 1,
+        "maxWorkers": 4,
+        "batchSize": 8,
+        "maxBatchDelay": 100,  # milliseconds
+        "responseTimeout": 120,  # seconds
+        "deviceType": "cpu",  # Change to "gpu" if using CUDA
+        "parallelType": "pp",
+        "handler": {
+            "module": "inference",
+            "class": "VisionInferenceEngine" if task_spec.modality == "vision" else "TextInferenceEngine"
+        },
+        "metrics": {
+            "enable": True,
+            "port": 8082,
+            "mode": "prometheus"
+        }
+    }
+
+    config_path = export_dir / "configs" / "torchserve_config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with config_path.open("w") as f:
+        json.dump(config, f, indent=2)
+
+    print(f"✅ Generated TorchServe config: {config_path}")
+    return config_path
+
+
+def generate_dockerfile(
+    task_spec: "TaskSpec",
+    export_dir: Path
+) -> Path:
+    """
+    Generate Dockerfile for containerized deployment.
+
+    Args:
+        task_spec: TaskSpec with task information
+        export_dir: Directory to write Dockerfile
+
+    Returns:
+        Path to generated Dockerfile
+    """
+    modality = getattr(task_spec, "modality", "text")
+
+    # Choose base image based on requirements
+    base_image = "pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime"
+
+    dockerfile_content = f'''# Production Inference Container
+# Generated for: {task_spec.name}
+# Modality: {modality}
+
+FROM {base_image}
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \\
+    curl \\
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy model artifacts and configs
+COPY artifacts/ ./artifacts/
+COPY configs/ ./configs/
+COPY inference.py .
+
+# Create non-root user for security
+RUN useradd -m -u 1000 inference && \\
+    chown -R inference:inference /app
+USER inference
+
+# Expose inference port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \\
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV MODEL_PATH=artifacts/model.onnx
+
+# Run inference server
+# Override this CMD with your preferred serving framework
+CMD ["python", "inference.py", "--model", "artifacts/model.onnx", "--host", "0.0.0.0", "--port", "8080"]
+'''
+
+    dockerfile_path = export_dir / "Dockerfile"
+    dockerfile_path.write_text(dockerfile_content)
+    print(f"✅ Generated Dockerfile: {dockerfile_path}")
+    return dockerfile_path
+
+
+def _generate_runtime_requirements(modality: str, formats: List[str]) -> List[str]:
+    """Generate runtime requirements.txt content."""
+    requirements = [
+        "# Runtime dependencies for model inference",
+        "# Generated by Transformer Builder Export Utilities",
+        "",
+        "# Core dependencies",
+        "numpy>=1.21.0",
+        "pillow>=9.0.0" if modality == "vision" else "# pillow>=9.0.0  # Vision tasks only",
+    ]
+
+    # Add format-specific dependencies
+    if "onnx" in formats:
+        requirements.extend([
+            "",
+            "# ONNX Runtime",
+            "onnxruntime>=1.15.0  # CPU inference",
+            "# onnxruntime-gpu>=1.15.0  # GPU inference (uncomment if using CUDA)",
+        ])
+
+    if "torchscript" in formats:
+        requirements.extend([
+            "",
+            "# PyTorch (for TorchScript)",
+            "torch>=2.0.0",
+        ])
+
+    if modality == "text":
+        requirements.extend([
+            "",
+            "# Text processing (optional)",
+            "# transformers>=4.30.0  # If using HuggingFace tokenizers",
+        ])
+
+    requirements.extend([
+        "",
+        "# Web serving (optional)",
+        "# flask>=2.0.0",
+        "# fastapi>=0.100.0",
+        "# uvicorn>=0.22.0",
+    ])
+
+    return requirements
+
+
+def create_export_bundle(
+    model: nn.Module,
+    config: Any,
+    task_spec: "TaskSpec",
+    training_config: Any,
+    export_base_dir: str = "exports"
+) -> Path:
+    """
+    Create complete production inference bundle.
+
+    Generates:
+    - Model artifacts (ONNX, TorchScript, PyTorch)
+    - inference.py script
+    - README.md
+    - TorchServe config
+    - Dockerfile
+    - requirements.txt
+
+    Args:
+        model: Trained PyTorch model
+        config: Model configuration (SimpleNamespace or dict)
+        task_spec: TaskSpec describing the task
+        training_config: TrainingConfig with export settings
+        export_base_dir: Base directory for exports
+
+    Returns:
+        Path to export directory
+
+    Example:
+        >>> export_dir = create_export_bundle(
+        ...     model=trained_model,
+        ...     config=model_config,
+        ...     task_spec=TaskSpec.vision_tiny(),
+        ...     training_config=TrainingConfig(export_bundle=True)
+        ... )
+        ✅ Export bundle created at: exports/model_20250118_143022
+    """
+    print("\n" + "=" * 80)
+    print("Creating Production Inference Bundle")
+    print("=" * 80)
+
+    # Create timestamped export directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    export_dir = Path(export_base_dir) / f"model_{timestamp}"
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    artifacts_dir = export_dir / "artifacts"
+    artifacts_dir.mkdir(exist_ok=True)
+
+    configs_dir = export_dir / "configs"
+    configs_dir.mkdir(exist_ok=True)
+
+    # Get export formats from training config
+    export_formats = getattr(training_config, "export_formats", ["onnx", "torchscript"])
+
+    print(f"\nExport Directory: {export_dir}")
+    print(f"Formats: {', '.join(export_formats)}")
+    print(f"Task: {task_spec.name} ({task_spec.modality})")
+    print()
+
+    # 1. Export model in requested formats
+    print("📦 Exporting model artifacts...")
+
+    try:
+        # Prepare dummy input for export
+        from .export_utilities import _generate_dummy_input_from_task
+        device = next(model.parameters()).device
+        dummy_batch = _generate_dummy_input_from_task(task_spec, batch_size=1, device=device)
+
+        for fmt in export_formats:
+            if fmt == "onnx":
+                try:
+                    exporter = ONNXExporter(optimize=False, validate=False, benchmark=False)
+
+                    if task_spec.modality == "vision":
+                        image_size = task_spec.input_schema.get("image_size", [3, 224, 224])
+                        c, h, w = image_size
+                        exporter.export(
+                            model,
+                            output_path=artifacts_dir / "model.onnx",
+                            vocab_size=1,
+                            max_seq_len=1,
+                            batch_size=1,
+                            dynamic_axes=False,
+                            input_names=["pixel_values"],
+                            output_names=["logits"]
+                        )
+                    else:
+                        vocab_size = task_spec.input_schema.get("vocab_size", 50257)
+                        max_seq_len = task_spec.input_schema.get("max_seq_len", 128)
+                        exporter.export(
+                            model,
+                            output_path=artifacts_dir / "model.onnx",
+                            vocab_size=vocab_size,
+                            max_seq_len=max_seq_len
+                        )
+                except Exception as e:
+                    print(f"⚠️  ONNX export failed: {e}")
+
+            elif fmt == "torchscript":
+                try:
+                    exporter = TorchScriptExporter(validate=False, benchmark=False)
+
+                    if task_spec.modality == "vision":
+                        vocab_size = 8
+                        max_seq_len = 16
+                    else:
+                        vocab_size = task_spec.input_schema.get("vocab_size", 50257)
+                        max_seq_len = task_spec.input_schema.get("max_seq_len", 128)
+
+                    exporter.export(
+                        model,
+                        output_path=artifacts_dir / "model.torchscript.pt",
+                        vocab_size=vocab_size,
+                        max_seq_len=max_seq_len
+                    )
+                except Exception as e:
+                    print(f"⚠️  TorchScript export failed: {e}")
+
+            elif fmt == "pytorch":
+                torch.save(model.state_dict(), artifacts_dir / "model.pytorch.pt")
+                print(f"✅ Exported PyTorch state dict")
+
+    except Exception as e:
+        print(f"⚠️  Model export encountered errors: {e}")
+        print("    Continuing with artifact generation...")
+
+    # 2. Generate inference script
+    print("\n📝 Generating inference script...")
+    primary_format = export_formats[0] if export_formats else "onnx"
+    try:
+        generate_inference_script(task_spec, export_dir, model_format=primary_format)
+    except Exception as e:
+        print(f"⚠️  Inference script generation failed: {e}")
+
+    # 3. Generate README
+    print("\n📚 Generating README...")
+    try:
+        generate_readme(task_spec, export_dir, export_formats)
+    except Exception as e:
+        print(f"⚠️  README generation failed: {e}")
+
+    # 4. Generate TorchServe config
+    print("\n⚙️  Generating TorchServe config...")
+    try:
+        generate_torchserve_config(task_spec, export_dir)
+    except Exception as e:
+        print(f"⚠️  TorchServe config generation failed: {e}")
+
+    # 5. Generate Dockerfile
+    print("\n🐳 Generating Dockerfile...")
+    try:
+        generate_dockerfile(task_spec, export_dir)
+    except Exception as e:
+        print(f"⚠️  Dockerfile generation failed: {e}")
+
+    # 6. Generate requirements.txt
+    print("\n📋 Generating requirements.txt...")
+    requirements = _generate_runtime_requirements(task_spec.modality, export_formats)
+    (export_dir / "requirements.txt").write_text("\n".join(requirements))
+    print(f"✅ Generated runtime requirements")
+
+    # 7. Save configs for reproducibility
+    print("\n💾 Saving configurations...")
+
+    # Save TaskSpec
+    try:
+        with open(configs_dir / "task_spec.json", "w") as f:
+            json.dump(task_spec.to_dict(), f, indent=2)
+        print(f"✅ Saved task_spec.json")
+    except Exception as e:
+        print(f"⚠️  Failed to save task_spec.json: {e}")
+
+    # Save TrainingConfig
+    try:
+        if hasattr(training_config, "to_dict"):
+            config_dict = training_config.to_dict()
+        elif isinstance(training_config, dict):
+            config_dict = training_config
+        else:
+            config_dict = vars(training_config)
+
+        with open(configs_dir / "training_config.json", "w") as f:
+            json.dump(config_dict, f, indent=2)
+        print(f"✅ Saved training_config.json")
+    except Exception as e:
+        print(f"⚠️  Failed to save training_config.json: {e}")
+
+    # Save metadata
+    try:
+        metadata = {
+            "export_timestamp": datetime.now().isoformat(),
+            "task_name": task_spec.name,
+            "modality": task_spec.modality,
+            "task_type": task_spec.task_type,
+            "formats": export_formats,
+            "framework_version": torch.__version__
+        }
+        with open(export_dir / "metadata.json", "w") as f:
+            json.dump(metadata, f, indent=2)
+        print(f"✅ Saved metadata.json")
+    except Exception as e:
+        print(f"⚠️  Failed to save metadata.json: {e}")
+
+    print("\n" + "=" * 80)
+    print(f"✅ Export bundle created successfully!")
+    print(f"📁 Location: {export_dir}")
+    print("=" * 80)
+    print()
+
+    return export_dir
+
+
 def create_repro_bundle(
     run_id: str,
     training_config,

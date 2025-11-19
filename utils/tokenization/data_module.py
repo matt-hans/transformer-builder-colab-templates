@@ -15,9 +15,80 @@ except ImportError:
 
 from torch.utils.data import DataLoader
 from datasets import Dataset
-from typing import Optional, Union
+from typing import Optional, Union, Any
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast, default_data_collator
 from ..training.seed_manager import seed_worker, create_seeded_generator
+
+
+def _get_collator(
+    task_spec: Optional[Any] = None,
+    tokenizer: Optional[Any] = None,
+    use_dynamic_collator: bool = False,
+    padding_side: str = 'right'
+) -> Any:
+    """Auto-select appropriate collator based on task modality.
+
+    Args:
+        task_spec: Optional TaskSpec object with modality information
+        tokenizer: Tokenizer for text tasks (required if modality is 'text')
+        use_dynamic_collator: Whether to use custom collators (vs default_data_collator)
+        padding_side: Padding side for text collators ('left' or 'right')
+
+    Returns:
+        Appropriate collator function/object
+
+    Raises:
+        ValueError: If modality is unsupported or required params are missing
+    """
+    # If no task_spec or dynamic collator not requested, use default
+    if task_spec is None or not use_dynamic_collator:
+        return default_data_collator
+
+    # Get modality from task_spec
+    modality = getattr(task_spec, 'modality', 'text')
+
+    if modality == "vision":
+        # Import VisionDataCollator
+        try:
+            from .data_collator import VisionDataCollator
+        except ImportError:
+            # Fallback to default if import fails
+            return default_data_collator
+
+        # Extract normalization params from preprocessing_config
+        preproc = getattr(task_spec, 'preprocessing_config', None) or {}
+        return VisionDataCollator(
+            normalize=preproc.get('normalize', True),
+            mean=preproc.get('mean', None),  # None defaults to ImageNet
+            std=preproc.get('std', None)
+        )
+
+    elif modality == "text":
+        # Import LanguageModelingDataCollator
+        try:
+            from .data_collator import LanguageModelingDataCollator
+        except ImportError:
+            # Fallback to default if import fails
+            return default_data_collator
+
+        if tokenizer is None:
+            raise ValueError("tokenizer is required for text modality tasks")
+
+        # Determine if masked LM based on task_type
+        task_type = getattr(task_spec, 'task_type', 'lm')
+        mlm = (task_type == 'masked_lm')
+
+        return LanguageModelingDataCollator(
+            tokenizer=tokenizer,
+            mlm=mlm,
+            padding_side=padding_side
+        )
+
+    else:
+        raise ValueError(
+            f"Unsupported modality: {modality}. "
+            f"Supported modalities are: 'text', 'vision'"
+        )
 
 
 if HAS_LIGHTNING:
@@ -296,32 +367,43 @@ if HAS_LIGHTNING:
                      train_dataset: Dataset,
                      val_dataset: Optional[Dataset] = None,
                      batch_size: int = 16,
-                     num_workers: int = 2):
+                     num_workers: int = 2,
+                     task_spec: Optional[Any] = None,
+                     tokenizer: Optional[Any] = None,
+                     use_dynamic_collator: bool = False,
+                     padding_side: str = 'right'):
             """
             Initialize with pre-tokenized datasets.
-    
+
             Args:
                 train_dataset: Tokenized training dataset
                 val_dataset: Optional tokenized validation dataset
                 batch_size: Batch size
                 num_workers: Number of data loading workers
+                task_spec: Optional TaskSpec for auto-selecting collator
+                tokenizer: Optional tokenizer for text tasks
+                use_dynamic_collator: Whether to use task-specific collators
+                padding_side: Padding side for text collators
             """
             super().__init__()
             self.train_dataset = train_dataset
             self.val_dataset = val_dataset
             self.batch_size = batch_size
             self.num_workers = num_workers
+            self.task_spec = task_spec
+            self.tokenizer = tokenizer
+            self.use_dynamic_collator = use_dynamic_collator
+            self.padding_side = padding_side
     
         def train_dataloader(self) -> DataLoader:
             """Create training dataloader."""
-            # Choose collator
-            collate_fn = default_data_collator
-            if self.use_dynamic_collator:
-                try:
-                    from .data_collator import LanguageModelingDataCollator
-                    collate_fn = LanguageModelingDataCollator(self.tokenizer, mlm=False, padding_side=self.padding_side)
-                except Exception:
-                    collate_fn = default_data_collator
+            # Auto-select collator based on task_spec modality
+            collate_fn = _get_collator(
+                task_spec=self.task_spec,
+                tokenizer=self.tokenizer,
+                use_dynamic_collator=self.use_dynamic_collator,
+                padding_side=self.padding_side
+            )
 
             return DataLoader(
                 self.train_dataset,
@@ -336,15 +418,14 @@ if HAS_LIGHTNING:
             """Create validation dataloader."""
             if self.val_dataset is None:
                 return None
-    
-            # Choose collator
-            collate_fn = default_data_collator
-            if self.use_dynamic_collator:
-                try:
-                    from .data_collator import LanguageModelingDataCollator
-                    collate_fn = LanguageModelingDataCollator(self.tokenizer, mlm=False, padding_side=self.padding_side)
-                except Exception:
-                    collate_fn = default_data_collator
+
+            # Auto-select collator based on task_spec modality
+            collate_fn = _get_collator(
+                task_spec=self.task_spec,
+                tokenizer=self.tokenizer,
+                use_dynamic_collator=self.use_dynamic_collator,
+                padding_side=self.padding_side
+            )
 
             return DataLoader(
                 self.val_dataset,

@@ -1,14 +1,14 @@
 import argparse
+import importlib.util
 import json
 import re
 from pathlib import Path
-import importlib.util
 
 import torch
 import torch.nn as nn
 
 from utils.training import TrainingConfig, build_task_spec, build_eval_config
-from utils.training.training_core import run_training, TrainingCoordinator
+from utils.training.training_core import TrainingCoordinator, run_training
 from utils.adapters import DecoderOnlyLMAdapter
 from utils.adapters.gist_loader import load_gist_model
 from utils.training.experiment_db import ExperimentDB
@@ -25,6 +25,36 @@ class LMStub(nn.Module):
         return self.head(x)
 
 
+_DANGEROUS_PATTERNS = (
+    "os.system(",
+    "subprocess.Popen",
+    "subprocess.call",
+    "subprocess.run(",
+    "shutil.rmtree(",
+)
+
+
+def _scan_model_source(path: Path) -> None:
+    """
+    Lightweight static scan for obviously dangerous patterns in custom model files.
+
+    This is a best-effort guardrail and does not guarantee safety; users should
+    still review any external code before execution.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return
+
+    hits = [p for p in _DANGEROUS_PATTERNS if p in text]
+    if hits:
+        raise RuntimeError(
+            f"[SECURITY WARNING] Refusing to execute custom model file '{path}' because it "
+            f"contains potentially dangerous calls: {', '.join(hits)}. "
+            "Please review and remove these calls before running in this environment."
+        )
+
+
 def _load_model_from_cfg(cfg: dict) -> nn.Module:
     # Local model path specified
     model_file = cfg.get('model_file') or cfg.get('model_path')
@@ -33,6 +63,11 @@ def _load_model_from_cfg(cfg: dict) -> nn.Module:
         if p.is_dir():
             p = p / 'model.py'
         if p.exists():
+            print(
+                f"[SECURITY WARNING] Loading external model code from '{p}'. "
+                "Review this file and ensure you trust its contents before execution."
+            )
+            _scan_model_source(p)
             spec = importlib.util.spec_from_file_location('user_model', str(p))
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
@@ -46,6 +81,11 @@ def _load_model_from_cfg(cfg: dict) -> nn.Module:
         root = Path('./external/gists') / md.gist_id / (md.revision or 'latest')
         mf = root / 'model.py'
         if mf.exists():
+            print(
+                f"[SECURITY WARNING] Loading external model code from GitHub gist '{md.gist_id}'. "
+                "Review the downloaded code in external/gists before execution."
+            )
+            _scan_model_source(mf)
             spec = importlib.util.spec_from_file_location('gist_model', str(mf))
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
@@ -95,8 +135,9 @@ def run_from_config(cfg: dict) -> dict:
     adapter = DecoderOnlyLMAdapter()
     model = _load_model_from_cfg(cfg)
 
-    # If Lightning/TrainingCoordinator is available, prefer it for full training;
-    # otherwise fall back to adapter-first stub loop.
+    # Prefer TrainingCoordinator when available, but fall back to the
+    # adapter-first run_training loop if Lightning is missing or any
+    # environment/runtime error occurs (e.g., no network for HF datasets).
     try:
         coordinator = TrainingCoordinator(
             output_dir=cfg.get('output_dir', './training_output'),
@@ -120,7 +161,7 @@ def run_from_config(cfg: dict) -> dict:
             resume_from_checkpoint=cfg_obj.resume_from_checkpoint,
             run_name=cfg_obj.run_name,
         )
-    except ImportError:
+    except Exception:
         out = run_training(model, adapter, cfg_obj, task, eval_cfg)
     # Optional DB logging if requested
     if cfg.get('log_to_db'):
