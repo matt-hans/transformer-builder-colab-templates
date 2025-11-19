@@ -1,5 +1,5 @@
 """
-Comprehensive 6-panel training visualization dashboard.
+Comprehensive 6-panel training visualization dashboard with drift detection.
 
 Provides professional-grade post-training analysis visualizations with:
 - Loss curves (train vs validation)
@@ -8,29 +8,45 @@ Provides professional-grade post-training analysis visualizations with:
 - Learning rate schedule
 - Gradient norm monitoring
 - Training time analysis
+- Drift detection visualization (NEW in v3.6)
 
 Example:
     >>> from utils.training.metrics_tracker import MetricsTracker
     >>> from utils.training.dashboard import TrainingDashboard
+    >>> from utils.training.drift_metrics import compute_dataset_profile, compare_profiles
     >>>
     >>> # After training
     >>> tracker = MetricsTracker(use_wandb=False)
     >>> # ... training loop with tracker.log_epoch() ...
     >>>
-    >>> # Create dashboard
+    >>> # Create standard dashboard
     >>> metrics_df = tracker.get_summary()
     >>> dashboard = TrainingDashboard(figsize=(18, 12))
     >>> fig = dashboard.plot(metrics_df, config=training_config)
     >>> dashboard.save('training_dashboard.png', dpi=150)
+    >>>
+    >>> # NEW: Create dashboard with drift visualization
+    >>> ref_profile = compute_dataset_profile(train_dataset, task_spec)
+    >>> new_profile = compute_dataset_profile(val_dataset, task_spec)
+    >>> drift_comparison = compare_profiles(ref_profile, new_profile)
+    >>> drift_data = {
+    ...     'ref_profile': ref_profile,
+    ...     'new_profile': new_profile,
+    ...     'drift_scores': drift_comparison['drift_scores'],
+    ...     'status': drift_comparison['status']
+    ... }
+    >>> fig = dashboard.plot_with_drift(metrics_df, drift_data, config=training_config)
+    >>> dashboard.save('training_dashboard_with_drift.png', dpi=150)
 """
 
 import logging
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, Dict, List
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.figure import Figure
+from matplotlib.colors import ListedColormap
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -407,3 +423,326 @@ class TrainingDashboard:
         ax.set_title('Training Time per Epoch', fontweight='bold')
         ax.legend(loc='best')
         ax.grid(True, alpha=0.3, axis='y')
+
+    # ========== NEW DRIFT VISUALIZATION METHODS (v3.6) ==========
+
+    def _plot_drift_distributions(self, ref_profile: Dict, new_profile: Dict, ax) -> None:
+        """
+        Plot side-by-side histograms showing reference vs current distributions.
+
+        For text: sequence length distribution
+        For vision: brightness histogram
+
+        Args:
+            ref_profile: Reference dataset profile from drift_metrics.compute_dataset_profile()
+            new_profile: Current dataset profile
+            ax: Matplotlib axis to plot on
+        """
+        # Detect modality
+        if 'seq_length_hist' in ref_profile:
+            # Text modality
+            bins = np.array(ref_profile['seq_length_bins'])
+            ref_counts = np.array(ref_profile['seq_length_hist'])
+            new_counts = np.array(new_profile['seq_length_hist'])
+
+            width = (bins[1] - bins[0]) * 0.4  # Bar width
+
+            ax.bar(bins[:-1] - width/2, ref_counts, width=width,
+                   alpha=0.6, label='Reference', color='#3498db')
+            ax.bar(bins[:-1] + width/2, new_counts, width=width,
+                   alpha=0.6, label='Current', color='#e74c3c')
+
+            ax.set_xlabel('Sequence Length', fontsize=10)
+            ax.set_ylabel('Frequency', fontsize=10)
+            ax.set_title('Sequence Length Distribution Shift', fontsize=11, fontweight='bold')
+            ax.legend(loc='upper right')
+            ax.grid(True, alpha=0.3)
+
+        elif 'brightness_hist' in ref_profile:
+            # Vision modality
+            bins = np.linspace(0, 1, 6)  # 5 brightness bins
+            ref_counts = np.array(ref_profile['brightness_hist'])
+            new_counts = np.array(new_profile['brightness_hist'])
+
+            bin_centers = (bins[:-1] + bins[1:]) / 2
+            width = (bins[1] - bins[0]) * 0.4
+
+            ax.bar(bin_centers - width/2, ref_counts, width=width,
+                   alpha=0.6, label='Reference', color='#3498db')
+            ax.bar(bin_centers + width/2, new_counts, width=width,
+                   alpha=0.6, label='Current', color='#e74c3c')
+
+            ax.set_xlabel('Brightness', fontsize=10)
+            ax.set_ylabel('Frequency', fontsize=10)
+            ax.set_title('Brightness Distribution Shift', fontsize=11, fontweight='bold')
+            ax.legend(loc='upper right')
+            ax.grid(True, alpha=0.3)
+        else:
+            # Unknown modality
+            ax.text(0.5, 0.5, 'Distribution data\nnot available',
+                    ha='center', va='center', fontsize=12, color='gray')
+            ax.set_title('Distribution Shift (N/A)', fontweight='bold')
+            ax.axis('off')
+
+    def _plot_drift_timeseries(self, drift_history: List[Dict], ax) -> None:
+        """
+        Plot drift scores over time/checkpoints.
+
+        Args:
+            drift_history: List of drift comparison results over time
+                [{'epoch': 0, 'drift_scores': {...}, 'status': 'ok'}, ...]
+            ax: Matplotlib axis
+        """
+        if not drift_history:
+            ax.text(0.5, 0.5, 'No drift history available',
+                    ha='center', va='center', fontsize=12, color='gray')
+            ax.set_title('Drift Score Over Time (N/A)', fontweight='bold')
+            ax.axis('off')
+            return
+
+        epochs = [entry['epoch'] for entry in drift_history]
+
+        # Extract primary drift metric (seq_length_js or brightness_js)
+        if 'seq_length_js' in drift_history[0]['drift_scores']:
+            metric_key = 'seq_length_js'
+            metric_label = 'Seq Length JS Distance'
+        elif 'brightness_js' in drift_history[0]['drift_scores']:
+            metric_key = 'brightness_js'
+            metric_label = 'Brightness JS Distance'
+        else:
+            # Fallback to max drift
+            metric_key = None
+            metric_label = 'Max JS Distance'
+
+        if metric_key:
+            scores = [entry['drift_scores'].get(metric_key, 0) for entry in drift_history]
+        else:
+            # Use max drift from all available metrics
+            scores = []
+            for entry in drift_history:
+                drift_vals = [v for k, v in entry['drift_scores'].items()
+                             if k.endswith('_js') or k.endswith('_distance')]
+                scores.append(max(drift_vals) if drift_vals else 0)
+
+        # Plot drift scores
+        ax.plot(epochs, scores, 'o-', color='#9b59b6', linewidth=2,
+                markersize=6, label=metric_label)
+
+        # Add threshold lines
+        ax.axhline(y=0.1, color='#f39c12', linestyle='--', linewidth=1.5,
+                   label='Warn Threshold (0.1)')
+        ax.axhline(y=0.2, color='#e74c3c', linestyle='--', linewidth=1.5,
+                   label='Alert Threshold (0.2)')
+
+        # Color background regions
+        ax.axhspan(0, 0.1, alpha=0.1, color='green')  # OK zone
+        ax.axhspan(0.1, 0.2, alpha=0.1, color='yellow')  # Warn zone
+        ax.axhspan(0.2, 1.0, alpha=0.1, color='red')  # Alert zone
+
+        ax.set_xlabel('Epoch', fontsize=10)
+        ax.set_ylabel('JS Distance', fontsize=10)
+        ax.set_title('Drift Score Over Time', fontsize=11, fontweight='bold')
+        ax.legend(loc='upper left', fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(0, min(max(scores) * 1.2, 1.0) if scores else 1.0)
+
+    def _plot_drift_heatmap(self, drift_scores: Dict, ax) -> None:
+        """
+        Color-coded heatmap showing drift status for each metric.
+
+        Args:
+            drift_scores: Dict from compare_profiles()
+                {'seq_length_js': 0.05, 'token_overlap': 0.95, 'output_js': 0.12, ...}
+            ax: Matplotlib axis
+        """
+        # Define metrics to show
+        metric_names = []
+        statuses = []
+
+        for metric_key in ['seq_length_js', 'brightness_js', 'token_overlap',
+                           'output_js', 'output_kl', 'channel_mean_distance']:
+            if metric_key not in drift_scores:
+                continue
+
+            score = drift_scores[metric_key]
+            metric_names.append(metric_key.replace('_', ' ').title())
+
+            # Classify status: ok (0), warn (1), alert (2)
+            if metric_key == 'token_overlap':
+                # Higher is better
+                if score > 0.9:
+                    statuses.append(0)  # ok
+                elif score > 0.7:
+                    statuses.append(1)  # warn
+                else:
+                    statuses.append(2)  # alert
+            else:
+                # Lower is better
+                if score < 0.1:
+                    statuses.append(0)  # ok
+                elif score < 0.2:
+                    statuses.append(1)  # warn
+                else:
+                    statuses.append(2)  # alert
+
+        if not metric_names:
+            ax.text(0.5, 0.5, 'No drift metrics available',
+                    ha='center', va='center', fontsize=12, color='gray')
+            ax.set_title('Drift Status Heatmap (N/A)', fontweight='bold')
+            ax.axis('off')
+            return
+
+        # Create heatmap
+        cmap = ListedColormap(['#2ecc71', '#f39c12', '#e74c3c'])  # green, yellow, red
+        data = np.array(statuses).reshape(1, -1)
+
+        im = ax.imshow(data, cmap=cmap, aspect='auto', vmin=0, vmax=2)
+
+        # Labels
+        ax.set_yticks([0])
+        ax.set_yticklabels(['Status'])
+        ax.set_xticks(range(len(metric_names)))
+        ax.set_xticklabels(metric_names, rotation=45, ha='right', fontsize=9)
+        ax.set_title('Drift Status Heatmap', fontsize=11, fontweight='bold')
+
+        # Add text annotations
+        for i, (name, status) in enumerate(zip(metric_names, statuses)):
+            status_text = ['✓ OK', '⚠ Warn', '✗ Alert'][status]
+            color = 'white' if status == 2 else 'black'
+            ax.text(i, 0, status_text, ha='center', va='center',
+                    fontsize=8, fontweight='bold', color=color)
+
+    def _plot_drift_summary(self, drift_scores: Dict, status: str, ax) -> None:
+        """
+        Text table showing key drift metrics.
+
+        Args:
+            drift_scores: Drift scores dict
+            status: Overall status ("ok", "warn", "alert")
+            ax: Matplotlib axis
+        """
+        ax.axis('off')
+
+        # Build table data
+        table_data = [['Metric', 'Value', 'Status']]
+
+        # Overall status
+        status_emoji = {'ok': '✅', 'warn': '⚠️', 'alert': '🚨'}[status]
+        table_data.append(['Overall Status', status.upper(), status_emoji])
+        table_data.append(['', '', ''])  # Separator
+
+        # Individual metrics
+        for key in ['seq_length_js', 'brightness_js', 'token_overlap',
+                    'output_js', 'output_kl', 'channel_mean_distance']:
+            if key not in drift_scores:
+                continue
+
+            value = drift_scores[key]
+            name = key.replace('_', ' ').title()
+
+            # Format value
+            if 'overlap' in key:
+                value_str = f"{value:.1%}"
+                status_str = '✅' if value > 0.9 else '⚠️' if value > 0.7 else '🚨'
+            else:
+                value_str = f"{value:.3f}"
+                status_str = '✅' if value < 0.1 else '⚠️' if value < 0.2 else '🚨'
+
+            table_data.append([name, value_str, status_str])
+
+        # Create table
+        table = ax.table(cellText=table_data, loc='center', cellLoc='left',
+                         colWidths=[0.5, 0.25, 0.25])
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1, 2)
+
+        # Style header row
+        for i in range(3):
+            cell = table[(0, i)]
+            cell.set_facecolor('#34495e')
+            cell.set_text_props(weight='bold', color='white')
+
+        ax.set_title('Drift Metrics Summary', fontsize=11, fontweight='bold', pad=20)
+
+    def plot_with_drift(
+        self,
+        metrics_df: pd.DataFrame,
+        drift_data: Optional[Dict] = None,
+        config: Optional[Any] = None,
+        title: str = 'Training Dashboard with Drift Analysis'
+    ) -> Figure:
+        """
+        Extended dashboard with drift visualization panels.
+
+        Args:
+            metrics_df: Training metrics DataFrame from MetricsTracker.get_summary()
+            drift_data: Optional dict with:
+                {
+                    'ref_profile': {...},  # Reference dataset profile
+                    'new_profile': {...},  # Current dataset profile
+                    'drift_scores': {...}, # From compare_profiles()
+                    'status': 'ok'|'warn'|'alert',
+                    'drift_history': [...]  # Optional timeseries
+                }
+            config: TrainingConfig (optional)
+            title: Dashboard title
+
+        Returns:
+            matplotlib.figure.Figure with 10-panel visualization (if drift_data provided)
+            or 6-panel standard dashboard (if drift_data=None)
+        """
+        if drift_data is None:
+            # Fall back to standard dashboard
+            return self.plot(metrics_df, config, title.replace(' with Drift Analysis', ''))
+
+        self._validate_dataframe(metrics_df)
+
+        # Extended 10-panel layout (6 training + 4 drift)
+        self.fig = plt.figure(figsize=(24, 18))
+        gs = gridspec.GridSpec(3, 4, figure=self.fig, hspace=0.3, wspace=0.3,
+                               top=0.92, bottom=0.05, left=0.05, right=0.95)
+
+        # Row 1: Loss, Perplexity, Accuracy, Learning Rate (no summary card in drift mode)
+        ax_loss = self.fig.add_subplot(gs[0, 0])
+        ax_perplexity = self.fig.add_subplot(gs[0, 1])
+        ax_accuracy = self.fig.add_subplot(gs[0, 2])
+        ax_lr = self.fig.add_subplot(gs[0, 3])
+
+        # Row 2: Gradient/time + drift panels
+        ax_gradients = self.fig.add_subplot(gs[1, 0])
+        ax_time = self.fig.add_subplot(gs[1, 1])
+        ax_drift_hist = self.fig.add_subplot(gs[1, 2])  # NEW: Drift histograms
+        ax_drift_ts = self.fig.add_subplot(gs[1, 3])    # NEW: Drift timeseries
+
+        # Row 3: Drift panels
+        ax_drift_heatmap = self.fig.add_subplot(gs[2, 0])  # NEW: Drift heatmap
+        ax_drift_summary = self.fig.add_subplot(gs[2, 1:])  # NEW: Drift summary (spans 3 columns)
+
+        # Plot existing panels (methods from base TrainingDashboard)
+        self._plot_loss_curves(metrics_df, ax_loss)
+        self._plot_perplexity(metrics_df, ax_perplexity)
+        self._plot_accuracy(metrics_df, ax_accuracy)
+        self._plot_learning_rate(metrics_df, ax_lr)
+        self._plot_gradient_norms(metrics_df, ax_gradients)
+        self._plot_training_time(metrics_df, ax_time)
+
+        # Plot NEW drift panels
+        self._plot_drift_distributions(
+            drift_data['ref_profile'],
+            drift_data['new_profile'],
+            ax_drift_hist
+        )
+        self._plot_drift_timeseries(
+            drift_data.get('drift_history', []),
+            ax_drift_ts
+        )
+        self._plot_drift_heatmap(drift_data['drift_scores'], ax_drift_heatmap)
+        self._plot_drift_summary(
+            drift_data['drift_scores'],
+            drift_data['status'],
+            ax_drift_summary
+        )
+
+        self.fig.suptitle(title, fontsize=16, fontweight='bold', y=0.995)
+        return self.fig

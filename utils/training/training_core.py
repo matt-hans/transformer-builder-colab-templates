@@ -115,11 +115,62 @@ class TrainingCoordinator:
         self.devices = devices
         self.num_nodes = num_nodes
 
+        # Notebook safety guardrail (apply during initialization)
+        if self._is_running_in_notebook():
+            if self.strategy in ('ddp', 'fsdp_native'):
+                override_env = os.getenv('ALLOW_NOTEBOOK_DDP', '').lower()
+                if override_env in ('1', 'true', 'yes'):
+                    logger.warning(
+                        f"⚠️  Notebook environment detected with {self.strategy} strategy. "
+                        "You set ALLOW_NOTEBOOK_DDP=1, so proceeding, but be aware this can "
+                        "create zombie processes. Restart your notebook runtime if training hangs."
+                    )
+                else:
+                    logger.warning(
+                        f"🔒 Notebook environment detected! {self.strategy} strategy can cause "
+                        "zombie processes in Jupyter/Colab. Automatically forcing strategy='auto' "
+                        "for safety. Override with environment variable: ALLOW_NOTEBOOK_DDP=1"
+                    )
+                    self.strategy = 'auto'
+
         # Subdirectories (per-run checkpoints will live under this root)
         self.checkpoint_dir = self.output_dir / 'checkpoints'
         self.log_dir = self.output_dir / 'logs'
         self.checkpoint_dir.mkdir(exist_ok=True)
         self.log_dir.mkdir(exist_ok=True)
+
+    @staticmethod
+    def _is_running_in_notebook() -> bool:
+        """
+        Detect if code is running in a Jupyter/Colab notebook environment.
+
+        Returns:
+            bool: True if running in notebook, False otherwise.
+
+        Detection strategy:
+            1. Google Colab: Check if google.colab can be imported
+            2. Jupyter: Check if get_ipython() returns ZMQInteractiveShell
+            3. IPython terminal: Exclude (not a notebook)
+            4. Standard Python: Return False
+        """
+        # Check for Google Colab
+        try:
+            import google.colab
+            return True
+        except ImportError:
+            pass
+
+        # Check for Jupyter notebook
+        try:
+            shell = get_ipython().__class__.__name__
+            if shell == 'ZMQInteractiveShell':
+                return True  # Jupyter notebook or qtconsole
+            elif shell == 'TerminalInteractiveShell':
+                return False  # IPython terminal (not a notebook)
+        except NameError:
+            return False  # Standard Python interpreter
+
+        return False
 
     def train(
         self,
@@ -402,6 +453,26 @@ class TrainingCoordinator:
             trainer_devices = 'auto' if self.use_gpu else 1
 
         # Distributed guardrails: warn and adjust clearly misconfigured setups
+
+        # NEW: Notebook safety guardrail (add before existing guardrails)
+        if self._is_running_in_notebook():
+            if self.strategy in ('ddp', 'fsdp_native'):
+                override_env = os.getenv('ALLOW_NOTEBOOK_DDP', '').lower()
+                if override_env in ('1', 'true', 'yes'):
+                    logger.warning(
+                        f"⚠️  Notebook environment detected with {self.strategy} strategy. "
+                        "You set ALLOW_NOTEBOOK_DDP=1, so proceeding, but be aware this can "
+                        "create zombie processes. Restart your notebook runtime if training hangs."
+                    )
+                else:
+                    logger.warning(
+                        f"🔒 Notebook environment detected! {self.strategy} strategy can cause "
+                        "zombie processes in Jupyter/Colab. Automatically forcing strategy='auto' "
+                        "for safety. Override with environment variable: ALLOW_NOTEBOOK_DDP=1"
+                    )
+                    self.strategy = 'auto'
+
+        # Existing device count guardrails
         if isinstance(trainer_devices, int):
             requested_devices = trainer_devices
         elif isinstance(trainer_devices, (list, tuple)):
