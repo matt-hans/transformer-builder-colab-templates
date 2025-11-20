@@ -42,11 +42,13 @@
 pytorch-lightning>=2.4.0
 optuna>=3.0.0
 torchmetrics>=1.3.0
+wandb>=0.15.0
 
 # Tests included:
 # - Fine-tuning with synthetic data
 # - Hyperparameter search (Optuna)
 # - Benchmark comparison against baselines
+# - Experiment tracking with W&B
 #
 # ==============================================================================
 

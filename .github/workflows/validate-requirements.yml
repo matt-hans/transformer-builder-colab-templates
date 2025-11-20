@@ -1,0 +1,107 @@
+name: Validate Requirements Sync
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'requirements.txt'
+      - 'requirements-training.txt'
+      - 'requirements-colab-v3.4.0.txt'
+      - 'utils/**/*.py'
+      - 'scripts/check_requirements_sync.py'
+      - '.github/workflows/validate-requirements.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'requirements.txt'
+      - 'requirements-training.txt'
+      - 'requirements-colab-v3.4.0.txt'
+      - 'utils/**/*.py'
+      - 'scripts/check_requirements_sync.py'
+      - '.github/workflows/validate-requirements.yml'
+
+jobs:
+  validate-sync:
+    name: Validate Requirements Files Sync
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install validation dependencies
+        run: |
+          pip install --upgrade pip
+          pip install packaging
+
+      - name: Make validation script executable
+        run: chmod +x scripts/check_requirements_sync.py
+
+      - name: Run requirements sync validation
+        run: python scripts/check_requirements_sync.py
+
+      - name: Upload validation report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: requirements-validation-report
+          path: |
+            requirements.txt
+            requirements-training.txt
+            requirements-colab-v3.4.0.txt
+          retention-days: 7
+
+  notify-on-failure:
+    name: Notify on Validation Failure
+    runs-on: ubuntu-latest
+    needs: validate-sync
+    if: failure()
+
+    steps:
+      - name: Comment on PR (if PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ❌ Requirements Sync Validation Failed
+
+            The requirements files are out of sync. Please review the [validation logs](${context.payload.repository.html_url}/actions/runs/${context.runId}).
+
+            ### Common fixes:
+
+            1. **Version conflicts**: Update version pins in \`requirements-training.txt\` to match \`requirements-colab-v3.4.0.txt\` range
+            2. **Missing packages**: Add training packages to the training section in \`requirements-colab-v3.4.0.txt\`
+            3. **Undeclared imports**: Add missing packages to \`requirements.txt\` or \`requirements-training.txt\`
+
+            ### How to update requirements properly:
+
+            See [DEVELOPMENT.md](docs/DEVELOPMENT.md#updating-requirements) for the complete workflow.
+
+            **Quick reference:**
+            \`\`\`bash
+            # Step 1: Update requirements.txt (local dev)
+            pip install new-package==1.2.3
+            pip freeze > requirements.txt
+
+            # Step 2: Update requirements-training.txt (training notebook)
+            echo "new-package==1.2.3" >> requirements-training.txt
+
+            # Step 3: Update requirements-colab (training section, range pins)
+            # Manually add: new-package>=1.2.0 to TRAINING.IPYNB section
+
+            # Step 4: Validate
+            python scripts/check_requirements_sync.py
+            \`\`\`
+            `
+            })
