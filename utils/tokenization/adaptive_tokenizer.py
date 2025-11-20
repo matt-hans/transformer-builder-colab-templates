@@ -197,6 +197,28 @@ class AdaptiveTokenizer:
         )
 
         print(f"✓ Loaded tokenizer with vocab_size={len(tokenizer)}")
+        
+        # Handle missing pad_token for decoder-only models (GPT-2, GPT-Neo, LLaMA, etc.)
+        # Industry standard: set pad_token = eos_token for autoregressive models
+        if tokenizer.pad_token is None:
+            if tokenizer.eos_token is not None:
+                tokenizer.pad_token = tokenizer.eos_token
+                tokenizer.pad_token_id = tokenizer.eos_token_id
+                print(f"✓ Set pad_token = eos_token (id={tokenizer.eos_token_id}) for decoder-only model")
+            else:
+                # Fallback: add custom pad token if eos_token also missing
+                tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+                print(f"✓ Added custom pad_token '[PAD]' (id={tokenizer.pad_token_id})")
+        
+        # Handle missing unk_token (rarer, but validator requires it)
+        if tokenizer.unk_token is None:
+            if hasattr(tokenizer, 'unk_token_id') and tokenizer.unk_token_id is not None:
+                # Token ID exists but string representation missing - acceptable
+                pass
+            else:
+                tokenizer.add_special_tokens({'unk_token': '[UNK]'})
+                print(f"✓ Added unk_token '[UNK]' (id={tokenizer.unk_token_id})")
+        
         return tokenizer
 
     @classmethod
