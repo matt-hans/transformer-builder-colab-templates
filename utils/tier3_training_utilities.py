@@ -838,7 +838,14 @@ def _setup_training_environment(
     # Without this, batch order will be non-deterministic even with set_random_seed()
     generator = create_seeded_generator(random_seed)
 
-    train_dataset = TensorDataset(torch.stack(train_data))
+    # Handle both HuggingFace Dataset (with .set_format) and List[Tensor] (legacy)
+    if hasattr(train_data, 'set_format'):
+        # HuggingFace Dataset with lazy loading (production-ready, scales to billions)
+        train_dataset = train_data
+    else:
+        # Legacy: List[torch.Tensor] (backward compatibility)
+        train_dataset = TensorDataset(torch.stack(train_data))
+    
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
@@ -851,7 +858,14 @@ def _setup_training_environment(
         generator=generator  # CRITICAL: Reproducible shuffling
     )
 
-    val_dataset = TensorDataset(torch.stack(val_data))
+    # Handle both HuggingFace Dataset and List[Tensor] for validation data
+    if hasattr(val_data, 'set_format'):
+        # HuggingFace Dataset with lazy loading
+        val_dataset = val_data
+    else:
+        # Legacy: List[torch.Tensor]
+        val_dataset = TensorDataset(torch.stack(val_data))
+    
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
