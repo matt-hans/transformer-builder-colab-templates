@@ -48,6 +48,17 @@ from .regression_testing import compare_models as compare_models_regression
 # Model registry (Phase 2 - P2-2)
 from .model_registry import ModelRegistry, ModelRegistryEntry
 
+# Job queue and scheduler (Phase 2 - P2-5)
+from .job_queue import (
+    JobManager,
+    TrainingScheduler,
+    JobExecutor,
+    Job,
+    Schedule,
+    JobType,
+    JobStatus
+)
+
 __all__ = [
     # Dataset utilities
     'DatasetLoader',
@@ -95,4 +106,13 @@ __all__ = [
     # Model registry
     'ModelRegistry',
     'ModelRegistryEntry',
+
+    # Job queue and scheduler
+    'JobManager',
+    'TrainingScheduler',
+    'JobExecutor',
+    'Job',
+    'Schedule',
+    'JobType',
+    'JobStatus',
 ]
