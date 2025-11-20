@@ -45,6 +45,9 @@ from .task_spec import TaskSpec, get_default_task_specs
 from .eval_config import EvalConfig
 from .regression_testing import compare_models as compare_models_regression
 
+# Model registry (Phase 2 - P2-2)
+from .model_registry import ModelRegistry, ModelRegistryEntry
+
 __all__ = [
     # Dataset utilities
     'DatasetLoader',
@@ -88,4 +91,8 @@ __all__ = [
     'EvalConfig',
     'get_default_task_specs',
     'compare_models_regression',
+
+    # Model registry
+    'ModelRegistry',
+    'ModelRegistryEntry',
 ]

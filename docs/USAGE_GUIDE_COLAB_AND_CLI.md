@@ -342,3 +342,405 @@ the thresholds inside your model-regression/drift logic accordingly.
 ### Using ExperimentDB Profiles
 
 To enable drift detection, first log a reference profile for a run using `log_profile_to_db` from `utils.training.drift_metrics`, then supply its `run_id` as `reference_profile_id` in the Tier 5 config.
+
+## Export Health Checks
+
+The export bundle system includes comprehensive health checks to ensure production readiness. Health checks validate models before, during, and after export to multiple formats.
+
+### Overview
+
+Health checks are automatically run when creating an export bundle via `create_export_bundle()` (enabled by default). The health checker performs three stages of validation:
+
+1. **Pre-Export Checks**: Validate model architecture, parameters, memory requirements, and forward pass
+2. **Format-Specific Validation**: Verify ONNX, TorchScript, and PyTorch exports
+3. **Post-Export Verification**: Check numerical consistency and performance benchmarks
+
+### Basic Usage
+
+```python
+from utils.training.export_utilities import create_export_bundle
+from utils.training.training_config import TrainingConfig
+
+# Create export bundle with health checks (default)
+export_dir = create_export_bundle(
+    model=trained_model,
+    config=model_config,
+    task_spec=task_spec,
+    training_config=TrainingConfig(
+        export_bundle=True,
+        export_formats=["onnx", "torchscript", "pytorch"]
+    )
+)
+
+# Health reports are automatically saved to:
+# - export_dir/artifacts/health_report.json (structured data)
+# - export_dir/health_report.md (human-readable report)
+```
+
+### Health Check Categories
+
+#### 1. Pre-Export Checks
+
+**Architecture Validation**:
+- Counts and validates model layers
+- Detects BatchNorm, Dropout, and other layer types
+- Verifies module hierarchy
+
+**Parameter Validation**:
+- Checks for NaN/Inf in model parameters
+- Computes parameter statistics (mean, std, min, max)
+- Reports total and trainable parameter counts
+
+**Input/Output Shape Validation**:
+- Validates forward pass with dummy inputs
+- Verifies output shapes match expected schema
+- Tests multiple batch sizes
+
+**Memory Requirements**:
+- Estimates parameter memory footprint
+- Measures peak memory usage during inference
+- Warns if memory requirements are excessive (>1GB)
+
+**Forward Pass Validation**:
+- Tests model with various batch sizes
+- Detects NaN/Inf in outputs
+- Validates model can handle different input shapes
+
+#### 2. Format-Specific Validation
+
+**ONNX Validation**:
+- Verifies ONNX model structure with `onnx.checker`
+- Reports opset version and IR version
+- Counts model operations
+- Checks file size and integrity
+
+**TorchScript Validation**:
+- Loads and validates TorchScript model
+- Tests forward pass with dummy input
+- Verifies serialization/deserialization
+- Checks for NaN/Inf in outputs
+
+**PyTorch Validation**:
+- Validates state dict completeness
+- Checks for NaN/Inf in saved tensors
+- Verifies parameter count matches original model
+- Reports file size
+
+#### 3. Post-Export Verification
+
+**Numerical Consistency**:
+- Compares ONNX outputs with PyTorch (max error threshold: 1e-4)
+- Compares TorchScript outputs with PyTorch (max error threshold: 1e-6)
+- Reports absolute and relative errors
+- Fails if numerical differences exceed thresholds
+
+**Performance Benchmarking**:
+- Measures inference latency for PyTorch, ONNX, TorchScript
+- Computes speedup ratios (e.g., ONNX is 2.3x faster)
+- Runs 50 inference iterations for stable measurements
+- Reports mean inference time in milliseconds
+
+### Health Report Format
+
+#### JSON Report Structure
+
+```json
+{
+  "timestamp": "2025-01-20T14:30:00",
+  "model_name": "my-transformer",
+  "summary": {
+    "total": 12,
+    "passed": 10,
+    "warnings": 1,
+    "failed": 1
+  },
+  "health_score": 87.5,
+  "all_passed": false,
+  "checks": [
+    {
+      "check_name": "architecture_validation",
+      "status": "passed",
+      "message": "Architecture validated: 42 modules",
+      "details": {
+        "total_modules": 42,
+        "layer_counts": {"Linear": 8, "Embedding": 2, ...}
+      },
+      "duration_seconds": 0.123
+    },
+    {
+      "check_name": "parameter_validation",
+      "status": "failed",
+      "message": "Found 2 NaN parameters",
+      "details": {
+        "total_params": 1250000,
+        "nan_params": 2,
+        "inf_params": 0
+      },
+      "duration_seconds": 0.456
+    }
+  ],
+  "recommendations": [
+    "Fix NaN parameters: Check training stability and gradient clipping",
+    "Review all warnings before production deployment"
+  ]
+}
+```
+
+#### Markdown Report
+
+The Markdown report includes:
+- **Summary**: Pass/fail counts and health score
+- **Failed Checks**: Detailed error information for failures
+- **Warnings**: Non-critical issues requiring attention
+- **All Checks**: Tabular summary of all validations
+- **Recommendations**: Actionable next steps
+
+### Health Score Calculation
+
+The health score (0-100) is computed as:
+- **Passed checks**: Full credit (1.0 weight)
+- **Warnings**: Partial credit (0.5 weight)
+- **Failed checks**: No credit (0.0 weight)
+
+Formula: `score = (passed + 0.5 * warnings) / total * 100`
+
+Example:
+- 10 passed, 2 warnings, 1 failed → Score: `(10 + 0.5*2) / 13 * 100 = 84.6/100`
+
+### Programmatic Usage
+
+#### Run Health Checks Separately
+
+```python
+from utils.training.export_health import ExportHealthChecker
+
+# Create health checker
+checker = ExportHealthChecker(
+    model=trained_model,
+    config=model_config,
+    task_spec=task_spec
+)
+
+# Run only pre-export checks
+report = checker.run_all_checks()
+
+# Access results
+print(f"Health Score: {report.health_score}/100")
+print(f"All Passed: {report.all_passed}")
+
+for check in report.get_failed_checks():
+    print(f"Failed: {check.check_name} - {check.message}")
+
+# Run full checks including post-export verification
+full_report = checker.run_all_checks(
+    export_dir=Path("exports/model_001"),
+    formats=["onnx", "torchscript"]
+)
+
+# Save reports
+full_report.save_json("health_report.json")
+full_report.save_markdown("health_report.md")
+```
+
+#### Disable Health Checks
+
+```python
+# Skip health checks for faster exports
+export_dir = create_export_bundle(
+    model=trained_model,
+    config=model_config,
+    task_spec=task_spec,
+    training_config=training_config,
+    run_health_checks=False  # Disable health validation
+)
+```
+
+#### Custom Health Check Logic
+
+```python
+from utils.training.export_health import CheckResult, ExportHealthReport
+
+# Create custom check
+def custom_check(model, config):
+    # Your validation logic
+    if some_condition:
+        return CheckResult(
+            check_name="custom_validation",
+            status="passed",
+            message="Custom check passed",
+            details={"metric": 0.95}
+        )
+    else:
+        return CheckResult(
+            check_name="custom_validation",
+            status="failed",
+            message="Custom check failed",
+            details={"error": "Some error"}
+        )
+
+# Add to report
+report = ExportHealthReport(
+    timestamp=datetime.now().isoformat(),
+    model_name="my-model"
+)
+report.add_check(custom_check(model, config))
+```
+
+### Production Deployment Guidelines
+
+#### Critical Checks (Must Pass)
+
+Before production deployment, ensure these checks **pass**:
+1. **Parameter Validation**: No NaN/Inf in model weights
+2. **Forward Pass Validation**: Model produces valid outputs
+3. **Numerical Consistency**: Export formats match PyTorch outputs
+4. **Format Validation**: All export formats load successfully
+
+#### Warnings (Review Required)
+
+Warnings may be acceptable depending on use case:
+- **Large Memory Footprint**: Consider quantization or model compression
+- **Moderate Numerical Differences**: Acceptable for some applications (e.g., ONNX may have slight differences due to operator implementations)
+
+#### Failed Checks Remediation
+
+**NaN Parameters**:
+```python
+# Check training stability
+# - Reduce learning rate
+# - Enable gradient clipping
+# - Check for exploding gradients
+
+from utils.training.training_config import TrainingConfig
+
+config = TrainingConfig(
+    learning_rate=1e-5,  # Reduce LR
+    max_grad_norm=1.0,   # Enable gradient clipping
+    use_amp=True         # Use mixed precision
+)
+```
+
+**Numerical Inconsistency**:
+```python
+# For ONNX exports, ensure proper precision and opset
+from utils.training.export_utilities import ONNXExporter
+
+exporter = ONNXExporter(
+    opset_version=16,     # Use newer opset
+    optimize=True,        # Enable optimizations
+    validate=True         # Validate outputs
+)
+```
+
+**Memory Issues**:
+```python
+# Apply quantization to reduce memory footprint
+from utils.training.export_utilities import export_model
+
+paths = export_model(
+    model=model,
+    adapter=adapter,
+    task_spec=task_spec,
+    export_dir="exports/quantized",
+    formats=["torchscript", "onnx", "pytorch"],
+    quantization="dynamic"  # Apply dynamic quantization
+)
+```
+
+### CI/CD Integration
+
+Integrate health checks into your CI/CD pipeline:
+
+```yaml
+# .github/workflows/model_export.yml
+name: Model Export and Validation
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  export-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      - name: Export model with health checks
+        run: |
+          python - << 'PY'
+          from utils.training.export_utilities import create_export_bundle
+
+          export_dir = create_export_bundle(
+              model=trained_model,
+              config=model_config,
+              task_spec=task_spec,
+              training_config=training_config,
+              run_health_checks=True
+          )
+
+          # Load health report
+          import json
+          with open(export_dir / "artifacts" / "health_report.json") as f:
+              report = json.load(f)
+
+          # Fail CI if health checks failed
+          if not report["all_passed"]:
+              print("Health checks failed!")
+              print(f"Health Score: {report['health_score']}/100")
+              for check in report["checks"]:
+                  if check["status"] == "failed":
+                      print(f"Failed: {check['check_name']} - {check['message']}")
+              exit(1)
+
+          print(f"Health checks passed! Score: {report['health_score']}/100")
+          PY
+      - name: Upload health report
+        uses: actions/upload-artifact@v3
+        with:
+          name: health-report
+          path: exports/*/health_report.md
+```
+
+### Best Practices
+
+1. **Always run health checks** before production deployment
+2. **Archive health reports** with exported models for audit trails
+3. **Set thresholds** for acceptable warnings in your deployment pipeline
+4. **Monitor health scores** over time to detect model degradation
+5. **Review recommendations** in health reports for optimization opportunities
+6. **Test on target hardware** - health checks use current device, may differ from production
+7. **Validate multiple formats** - ONNX and TorchScript may have different behaviors
+8. **Document exceptions** - if deploying with warnings, document why they're acceptable
+
+### Troubleshooting
+
+**Health checks fail with "torch not available"**:
+- Ensure PyTorch is installed: `pip install torch>=2.0`
+- Use virtual environment with proper dependencies
+
+**ONNX validation shows "module not found"**:
+- Install ONNX dependencies: `pip install onnx onnxruntime onnxscript`
+- Or disable ONNX export in `export_formats` list
+
+**Numerical consistency fails for ONNX**:
+- Some operators may have slight differences between PyTorch and ONNX
+- Check opset version compatibility
+- Review operator implementations in ONNX Runtime docs
+- Consider increasing tolerance threshold if differences are acceptable
+
+**Performance benchmark shows no speedup**:
+- ONNX/TorchScript speedup varies by model architecture
+- Smaller models may not benefit from optimization
+- Try different ONNX optimization levels
+- Test on target deployment hardware (CPU vs GPU)
+
+**Memory requirements estimation fails**:
+- Requires CUDA for accurate GPU memory profiling
+- CPU estimates are approximate (parameter memory × 2)
+- Test on actual deployment hardware for accurate measurements

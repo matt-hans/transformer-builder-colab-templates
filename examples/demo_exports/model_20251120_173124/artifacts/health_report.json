@@ -1,0 +1,173 @@
+{
+  "timestamp": "2025-11-20T17:31:24.538228",
+  "model_name": "demo-task",
+  "summary": {
+    "total": 0,
+    "passed": 0,
+    "warnings": 0,
+    "failed": 0
+  },
+  "health_score": 100.0,
+  "all_passed": true,
+  "checks": [
+    {
+      "check_name": "architecture_validation",
+      "status": "passed",
+      "message": "Architecture validated: 5 modules",
+      "details": {
+        "total_modules": 5,
+        "layer_counts": {
+          "SimpleTransformer": 1,
+          "Embedding": 1,
+          "MultiheadAttention": 1,
+          "NonDynamicallyQuantizableLinear": 1,
+          "Linear": 1
+        },
+        "has_batchnorm": false,
+        "has_dropout": false
+      },
+      "duration_seconds": 0.0
+    },
+    {
+      "check_name": "parameter_validation",
+      "status": "passed",
+      "message": "All 323,048 parameters are valid",
+      "details": {
+        "total_params": 323048,
+        "trainable_params": 323048,
+        "nan_params": 0,
+        "inf_params": 0,
+        "sample_stats": {
+          "embedding.weight": {
+            "shape": [
+              1000,
+              128
+            ],
+            "mean": -0.002668132074177265,
+            "std": 1.0006606578826904,
+            "min": -4.4745306968688965,
+            "max": 4.734504222869873
+          },
+          "attention.in_proj_weight": {
+            "shape": [
+              384,
+              128
+            ],
+            "mean": -0.00015026344044599682,
+            "std": 0.06252704560756683,
+            "min": -0.10824985802173615,
+            "max": 0.1082509309053421
+          },
+          "attention.in_proj_bias": {
+            "shape": [
+              384
+            ],
+            "mean": 0.0,
+            "std": 0.0,
+            "min": 0.0,
+            "max": 0.0
+          },
+          "attention.out_proj.weight": {
+            "shape": [
+              128,
+              128
+            ],
+            "mean": -0.0007445649243891239,
+            "std": 0.051364537328481674,
+            "min": -0.0883573368191719,
+            "max": 0.08838119357824326
+          },
+          "attention.out_proj.bias": {
+            "shape": [
+              128
+            ],
+            "mean": 0.0,
+            "std": 0.0,
+            "min": 0.0,
+            "max": 0.0
+          }
+        }
+      },
+      "duration_seconds": 0.001
+    },
+    {
+      "check_name": "shape_validation",
+      "status": "passed",
+      "message": "Input [1, 64] \u2192 Output [1, 64, 1000]",
+      "details": {
+        "input_shape": [
+          1,
+          64
+        ],
+        "output_shape": [
+          1,
+          64,
+          1000
+        ],
+        "input_dtype": "torch.int64",
+        "output_dtype": "torch.float32"
+      },
+      "duration_seconds": 0.0
+    },
+    {
+      "check_name": "memory_requirements",
+      "status": "passed",
+      "message": "Memory requirements: 2.5 MB",
+      "details": {
+        "parameter_memory_mb": 1.23,
+        "peak_memory_mb": 2.46,
+        "estimated_batch_memory_mb": 19.72
+      },
+      "duration_seconds": 0.0
+    },
+    {
+      "check_name": "forward_pass_validation",
+      "status": "passed",
+      "message": "Forward pass validated for 2 test cases",
+      "details": {
+        "test_results": [
+          {
+            "test_case": "batch_size_1",
+            "batch_size": 1,
+            "success": true,
+            "has_nan": false,
+            "has_inf": false
+          },
+          {
+            "test_case": "batch_size_4",
+            "batch_size": 4,
+            "success": true,
+            "has_nan": false,
+            "has_inf": false
+          }
+        ]
+      },
+      "duration_seconds": 0.001
+    },
+    {
+      "check_name": "pytorch_validation",
+      "status": "passed",
+      "message": "PyTorch state dict is valid (7 keys, 323,048 params)",
+      "details": {
+        "file_size_mb": 1.24,
+        "num_keys": 7,
+        "total_params": 323048,
+        "nan_tensors": 0,
+        "inf_tensors": 0
+      },
+      "duration_seconds": 0.002
+    },
+    {
+      "check_name": "performance_benchmark",
+      "status": "passed",
+      "message": "PyTorch: 0.16ms",
+      "details": {
+        "pytorch_ms": 0.164
+      },
+      "duration_seconds": 0.009
+    }
+  ],
+  "recommendations": [
+    "\u2705 All checks passed! Model is ready for production deployment"
+  ]
+}
