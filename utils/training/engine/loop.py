@@ -500,13 +500,13 @@ class TrainingLoop:
     def _get_batch_size(self, batch: Dict[str, Any]) -> int:
         """Extract batch size from batch dictionary."""
         if 'input_ids' in batch:
-            return batch['input_ids'].size(0)
+            return int(batch['input_ids'].size(0))
         elif 'pixel_values' in batch:
-            return batch['pixel_values'].size(0)
+            return int(batch['pixel_values'].size(0))
         # Fallback: find first tensor and get batch size
         for value in batch.values():
             if isinstance(value, torch.Tensor):
-                return value.size(0)
+                return int(value.size(0))
         return 1
 
     def _forward_pass(self, model: nn.Module, batch: Dict[str, Any]) -> tuple[torch.Tensor, float]:
@@ -902,12 +902,12 @@ class ValidationLoop:
     def _get_batch_size(self, batch: Dict[str, Any]) -> int:
         """Extract batch size from batch dictionary."""
         if 'input_ids' in batch:
-            return batch['input_ids'].size(0)
+            return int(batch['input_ids'].size(0))
         elif 'pixel_values' in batch:
-            return batch['pixel_values'].size(0)
+            return int(batch['pixel_values'].size(0))
         for value in batch.values():
             if isinstance(value, torch.Tensor):
-                return value.size(0)
+                return int(value.size(0))
         return 1
 
     def _get_model_output(self, model: nn.Module, input_ids: torch.Tensor) -> torch.Tensor:

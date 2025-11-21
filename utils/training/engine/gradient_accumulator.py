@@ -231,7 +231,8 @@ class GradientAccumulator:
         if isinstance(accum, dict):
             # Dict maps epoch to accumulation steps
             # Use the value for epoch 0 as default
-            return accum.get(0, 1)
+            value = accum.get(0, 1)
+            return int(value) if value is not None else 1
         return int(accum)
 
     def _validate_configuration(self) -> None:
@@ -346,8 +347,8 @@ class GradientAccumulator:
             # Lightning handles everything, just track steps
             self._total_steps += 1
             # Lightning global_step is the effective step
-            if hasattr(self._trainer, 'global_step'):
-                self._optimizer_steps = self._trainer.global_step
+            if self._trainer is not None and hasattr(self._trainer, 'global_step'):
+                self._optimizer_steps = int(self._trainer.global_step)
             return True  # Lightning controls when optimizer steps
 
         # Scale loss by accumulation steps
@@ -425,9 +426,9 @@ class GradientAccumulator:
         total_norm = 0.0
         for param in model.parameters():
             if param.grad is not None:
-                param_norm = param.grad.data.norm(2).item()
+                param_norm: float = param.grad.data.norm(2).item()
                 total_norm += param_norm ** 2
-        return total_norm ** 0.5
+        return float(total_norm ** 0.5)
 
     def reset_epoch(self) -> None:
         """
@@ -444,7 +445,7 @@ class GradientAccumulator:
             )
         self._accumulation_counter = 0
 
-    def state_dict(self) -> dict:
+    def state_dict(self) -> dict[str, int | float | None]:
         """
         Get accumulator state for checkpointing.
 
@@ -458,17 +459,21 @@ class GradientAccumulator:
             'last_grad_norm': self._last_grad_norm
         }
 
-    def load_state_dict(self, state_dict: dict) -> None:
+    def load_state_dict(self, state_dict: dict[str, int | float | None]) -> None:
         """
         Load accumulator state from checkpoint.
 
         Args:
             state_dict: Dictionary with accumulator state
         """
-        self._total_steps = state_dict.get('total_steps', 0)
-        self._optimizer_steps = state_dict.get('optimizer_steps', 0)
-        self._accumulation_counter = state_dict.get('accumulation_counter', 0)
-        self._last_grad_norm = state_dict.get('last_grad_norm', 0.0)
+        total_steps_val = state_dict.get('total_steps', 0)
+        self._total_steps = int(total_steps_val) if isinstance(total_steps_val, (int, float)) else 0
+        optimizer_steps_val = state_dict.get('optimizer_steps', 0)
+        self._optimizer_steps = int(optimizer_steps_val) if isinstance(optimizer_steps_val, (int, float)) else 0
+        accum_counter_val = state_dict.get('accumulation_counter', 0)
+        self._accumulation_counter = int(accum_counter_val) if isinstance(accum_counter_val, (int, float)) else 0
+        grad_norm_val = state_dict.get('last_grad_norm', 0.0)
+        self._last_grad_norm = float(grad_norm_val) if isinstance(grad_norm_val, (int, float)) else 0.0
 
         logger.info(
             f"Loaded GradientAccumulator state: "

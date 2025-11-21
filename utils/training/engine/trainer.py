@@ -316,7 +316,9 @@ class Trainer:
                 val_metrics = {}
                 if val_data is not None:
                     val_metrics = self._run_validation_epoch(epoch)
-                    self.hooks.on_validation_end(val_metrics)
+                    # Add val_ prefix for hook (consistent with MetricsTracker naming)
+                    val_metrics_prefixed = {f'val_{k}': v for k, v in val_metrics.items()}
+                    self.hooks.on_validation_end(val_metrics_prefixed)
 
                 # Combine metrics
                 epoch_metrics = {**train_metrics, **val_metrics}
@@ -436,6 +438,8 @@ class Trainer:
         # Use UniversalDataModule if task_spec provided
         if self.task_spec:
             self.data_module = UniversalDataModule(
+                train_data=train_data,
+                val_data=val_data,
                 task_spec=self.task_spec,
                 batch_size=self.training_config.batch_size,
                 num_workers=0,  # Single-threaded for reproducibility
@@ -635,7 +639,7 @@ class Trainer:
 
     def _prepare_loss_inputs(
         self,
-        batch: Union[Dict, tuple],
+        batch: Union[Dict[str, Any], tuple[Any, ...]],
         model_output: ModelOutput
     ) -> LossInputs:
         """
@@ -723,7 +727,8 @@ class Trainer:
             epoch=epoch,
             metrics=checkpoint_metrics,
             custom_state={
-                'training_config': self.training_config.to_dict()
+                'training_config': self.training_config.to_dict(),
+                'metrics_history': self.metrics_tracker.metrics_history
             }
         )
 
@@ -746,8 +751,13 @@ class Trainer:
         if self.scheduler is not None and checkpoint['scheduler_state_dict'] is not None:
             self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
+        # Restore metrics history if available
+        custom_state = checkpoint.get('custom_state', {})
+        if 'metrics_history' in custom_state:
+            self.metrics_tracker.metrics_history = custom_state['metrics_history']
+
         # Return next epoch to train
-        return checkpoint['epoch'] + 1
+        return int(checkpoint['epoch']) + 1
 
     def _format_results(self, training_time: float) -> Dict[str, Any]:
         """

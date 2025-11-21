@@ -247,9 +247,11 @@ class CollatorRegistry:
                 raise ValueError("tokenizer required for text collator")
 
             # Determine if masked LM from task_spec
+            # Note: 'masked_lm' is not in current TaskType Literal, so mlm is always False
+            # This is kept for future compatibility
             mlm = False
-            if task_spec and hasattr(task_spec, 'task_type'):
-                mlm = (task_spec.task_type == 'masked_lm')
+            # if task_spec and hasattr(task_spec, 'task_type'):
+            #     mlm = (task_spec.task_type == 'masked_lm')
 
             return LanguageModelingDataCollator(
                 tokenizer=tokenizer,
@@ -262,8 +264,8 @@ class CollatorRegistry:
         def create_vision_collator(
             task_spec: Optional[TaskSpec] = None,
             normalize: bool = True,
-            mean: Optional[tuple] = None,
-            std: Optional[tuple] = None,
+            mean: Optional[tuple[float, ...]] = None,
+            std: Optional[tuple[float, ...]] = None,
             **kwargs: Any
         ) -> Any:
             """Create vision collator (VisionDataCollator)."""
@@ -322,7 +324,7 @@ class DataLoaderConfig:
     persistent_workers: Optional[bool] = None  # Auto-detect based on num_workers
     drop_last: bool = False
     seed: int = 42
-    collate_fn: Optional[Callable] = None
+    collate_fn: Optional[Callable[..., Any]] = None
 
 
 class DataLoaderFactory:
@@ -439,7 +441,7 @@ class DataLoaderFactory:
         config: DataLoaderConfig,
         task_spec: Optional[TaskSpec],
         tokenizer: Optional[Any]
-    ) -> Optional[Callable]:
+    ) -> Optional[Callable[..., Any]]:
         """Get collate function from config or auto-select from task_spec."""
         # Explicit collate_fn takes priority
         if config.collate_fn is not None:
@@ -448,10 +450,13 @@ class DataLoaderFactory:
         # Auto-select from task_spec
         if task_spec:
             try:
-                return self.collator_registry.get_collator(
+                collator = self.collator_registry.get_collator(
                     task_spec=task_spec,
                     tokenizer=tokenizer
                 )
+                # get_collator returns Any (could be various collator classes)
+                # All collators are callable, so this is safe
+                return collator  # type: ignore[no-any-return]
             except Exception as e:
                 logger.warning(f"Failed to auto-select collator: {e}")
                 return None
@@ -633,7 +638,7 @@ class UniversalDataModule:
             )
 
     @staticmethod
-    def _get_dataset_length(dataset: Optional[Union[Dataset, HFDataset, List]]) -> int:
+    def _get_dataset_length(dataset: Optional[Union[Dataset, HFDataset, List[Any]]]) -> int:
         """Get dataset length (handles various types)."""
         if dataset is None:
             return 0

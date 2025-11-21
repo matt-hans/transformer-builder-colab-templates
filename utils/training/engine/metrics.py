@@ -326,7 +326,7 @@ class MetricsEngine:
         if self.use_wandb:
             try:
                 import wandb
-                wandb.log(metrics_dict, step=epoch)
+                wandb.log(metrics_dict, step=epoch)  # type: ignore[attr-defined]
             except ImportError:
                 logger.debug("W&B not available, skipping W&B logging")
             except Exception as e:
@@ -403,7 +403,7 @@ class MetricsEngine:
         if self.use_wandb:
             try:
                 import wandb
-                wandb.log({metric_name: value}, step=effective_step, commit=should_commit)
+                wandb.log({metric_name: value}, step=effective_step, commit=should_commit)  # type: ignore[attr-defined]
             except ImportError:
                 pass
             except Exception as e:
@@ -495,15 +495,15 @@ class MetricsEngine:
         if self.use_wandb:
             try:
                 import wandb
-                wandb.log({
+                wandb.log({  # type: ignore[attr-defined]
                     'confidence/top1': top1_confidence,
                     'confidence/top5': top5_confidence,
                     'confidence/entropy': entropy
                 }, step=effective_step)
 
                 # Log histogram of top-1 confidences (custom chart)
-                wandb.log({
-                    'confidence/top1_histogram': wandb.Histogram(top1_probs.cpu().numpy().tolist())
+                wandb.log({  # type: ignore[attr-defined]
+                    'confidence/top1_histogram': wandb.Histogram(top1_probs.cpu().numpy().tolist())  # type: ignore[attr-defined]
                 }, step=effective_step)
             except ImportError:
                 pass
