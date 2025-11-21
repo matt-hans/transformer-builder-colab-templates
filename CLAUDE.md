@@ -208,7 +208,7 @@ Efficient vision data batching with automatic collator selection:
 
 ```python
 from utils.training.task_spec import TaskSpec
-from utils.tokenization.data_module import UniversalDataModule
+from utils.training.engine.data import UniversalDataModule
 
 # Vision tasks automatically use VisionDataCollator (2-5% faster)
 task_spec = TaskSpec.vision_tiny()  # modality="vision"

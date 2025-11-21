@@ -308,7 +308,7 @@ When migrating existing code:
 from torch.utils.data import Dataset, DataLoader
 
 # If data is list/array, wrap it
-from utils.tokenization.data_module import UniversalDataModule
+from utils.training.engine.data import UniversalDataModule
 
 data_module = UniversalDataModule(
     train_dataset=train_data,
