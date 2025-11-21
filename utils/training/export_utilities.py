@@ -2071,10 +2071,11 @@ def create_export_bundle(
     config: Any,
     task_spec: "TaskSpec",
     training_config: Any,
-    export_base_dir: str = "exports"
+    export_base_dir: str = "exports",
+    run_health_checks: bool = True
 ) -> Path:
     """
-    Create complete production inference bundle.
+    Create complete production inference bundle with health validation.
 
     Generates:
     - Model artifacts (ONNX, TorchScript, PyTorch)
@@ -2083,6 +2084,7 @@ def create_export_bundle(
     - TorchServe config
     - Dockerfile
     - requirements.txt
+    - Health report (JSON and Markdown)
 
     Args:
         model: Trained PyTorch model
@@ -2090,6 +2092,7 @@ def create_export_bundle(
         task_spec: TaskSpec describing the task
         training_config: TrainingConfig with export settings
         export_base_dir: Base directory for exports
+        run_health_checks: Whether to run comprehensive health checks (default: True)
 
     Returns:
         Path to export directory
@@ -2102,6 +2105,7 @@ def create_export_bundle(
         ...     training_config=TrainingConfig(export_bundle=True)
         ... )
         ✅ Export bundle created at: exports/model_20250118_143022
+        ✅ Health Score: 98.5/100 - Ready for production
     """
     print("\n" + "=" * 80)
     print("Creating Production Inference Bundle")
@@ -2270,9 +2274,46 @@ def create_export_bundle(
     except Exception as e:
         print(f"⚠️  Failed to save metadata.json: {e}")
 
+    # 8. Run health checks
+    if run_health_checks:
+        print("\n🔍 Running health checks...")
+        try:
+            from .export_health import ExportHealthChecker
+
+            checker = ExportHealthChecker(model, config, task_spec)
+
+            # Run pre-export checks and post-export verification
+            health_report = checker.run_all_checks(
+                export_dir=export_dir,
+                formats=export_formats
+            )
+
+            # Save health reports
+            health_report.save_json(export_dir / "artifacts" / "health_report.json")
+            health_report.save_markdown(export_dir / "health_report.md")
+
+            # Print summary
+            health_report.print_summary()
+
+            # Add warnings if any checks failed
+            if not health_report.all_passed:
+                print("\n⚠️  WARNING: Some health checks failed!")
+                print("    Review health_report.md before production deployment")
+                print()
+        except Exception as e:
+            print(f"⚠️  Health checks failed: {e}")
+            print("    Export bundle created but health validation incomplete")
+            print()
+
     print("\n" + "=" * 80)
     print(f"✅ Export bundle created successfully!")
     print(f"📁 Location: {export_dir}")
+    if run_health_checks:
+        print(f"📊 Health Score: {health_report.health_score}/100")
+        if health_report.all_passed:
+            print("✅ Ready for production deployment")
+        else:
+            print("⚠️  Review health_report.md before deployment")
     print("=" * 80)
     print()
 

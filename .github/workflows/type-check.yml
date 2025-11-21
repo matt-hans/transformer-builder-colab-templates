@@ -1,0 +1,152 @@
+name: Type Check
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  mypy-strict:
+    name: Type Check (Strict - Engine Modules)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mypy torch numpy
+
+      - name: Type check engine modules (strict)
+        run: |
+          mypy --strict --show-error-codes utils/training/engine/
+        continue-on-error: false
+
+      - name: Verify type stubs exist
+        run: |
+          test -f utils/training/engine/__init__.pyi
+          test -f utils/training/engine/trainer.pyi
+          test -f utils/training/engine/loop.pyi
+          test -f utils/training/engine/metrics.pyi
+          test -f utils/training/engine/data.pyi
+          test -f utils/training/engine/loss.pyi
+          echo "✅ All type stub files present"
+
+  mypy-standard:
+    name: Type Check (Standard - Full Codebase)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mypy torch numpy pandas
+
+      - name: Type check full codebase (non-strict)
+        run: |
+          mypy --config-file mypy.ini utils/
+        continue-on-error: true  # Don't fail until full codebase is clean
+
+      - name: Generate type coverage report
+        run: |
+          mypy --config-file mypy.ini --html-report mypy-report utils/ || true
+        continue-on-error: true
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: mypy-coverage-report
+          path: mypy-report/
+
+  type-tests:
+    name: Type System Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run type system tests
+        run: |
+          pytest tests/test_types.py -v --tb=short
+
+  type-stub-validation:
+    name: Validate Type Stubs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mypy torch
+
+      - name: Validate stubs with mypy
+        run: |
+          # Test that mypy can use the stub files
+          mypy --strict --show-error-codes utils/training/engine/__init__.pyi
+          mypy --strict --show-error-codes utils/training/engine/trainer.pyi
+          mypy --strict --show-error-codes utils/training/engine/loop.pyi
+          mypy --strict --show-error-codes utils/training/engine/metrics.pyi
+          mypy --strict --show-error-codes utils/training/engine/data.pyi
+          mypy --strict --show-error-codes utils/training/engine/loss.pyi
+          echo "✅ All type stubs valid"

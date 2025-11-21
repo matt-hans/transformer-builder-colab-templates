@@ -33,6 +33,9 @@
 # - Tier 1: Shape validation, gradient flow, stability, initialization, memory, speed
 # - Tier 2: Attention patterns, robustness testing
 #
+# Note: Colab runtime is actively maintained and stays current.
+# As of 2025-11, Colab provides torch 2.9+ (higher than minimum 2.6+)
+#
 # ==============================================================================
 
 # ==============================================================================
@@ -42,11 +45,13 @@
 pytorch-lightning>=2.4.0
 optuna>=3.0.0
 torchmetrics>=1.3.0
+wandb>=0.15.0
 
 # Tests included:
 # - Fine-tuning with synthetic data
 # - Hyperparameter search (Optuna)
 # - Benchmark comparison against baselines
+# - Experiment tracking with W&B
 #
 # ==============================================================================
 

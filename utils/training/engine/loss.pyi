@@ -1,0 +1,56 @@
+import torch
+import torch.nn as nn
+from _typeshed import Incomplete
+from dataclasses import dataclass
+from typing import Any, Protocol, TypedDict
+
+class LossInputs(TypedDict, total=False):
+    logits: torch.Tensor
+    labels: torch.Tensor
+    attention_mask: torch.Tensor | None
+    pad_token_id: int | None
+    pixel_values: torch.Tensor | None
+    class_weights: torch.Tensor | None
+
+@dataclass
+class ModelOutput:
+    logits: torch.Tensor
+    loss: torch.Tensor | None = ...
+    hidden_states: torch.Tensor | None = ...
+    attentions: torch.Tensor | None = ...
+    @classmethod
+    def from_raw(cls, output: Any) -> ModelOutput: ...
+    def validate(self) -> None: ...
+
+class LossStrategy(Protocol):
+    def compute_loss(self, inputs: LossInputs) -> torch.Tensor: ...
+
+class LanguageModelingLoss:
+    def compute_loss(self, inputs: LossInputs) -> torch.Tensor: ...
+
+class ClassificationLoss:
+    def compute_loss(self, inputs: LossInputs) -> torch.Tensor: ...
+
+class PEFTAwareLoss:
+    base_strategy: Incomplete
+    model: Incomplete
+    def __init__(self, base_strategy: LossStrategy, model: nn.Module) -> None: ...
+    def compute_loss(self, inputs: LossInputs) -> torch.Tensor: ...
+
+class QuantizationSafeLoss:
+    base_strategy: Incomplete
+    def __init__(self, base_strategy: LossStrategy) -> None: ...
+    def compute_loss(self, inputs: LossInputs) -> torch.Tensor: ...
+
+class VisionLoss:
+    def compute_loss(self, inputs: LossInputs) -> torch.Tensor: ...
+
+class LossStrategyRegistry:
+    @classmethod
+    def register(cls, task_type: str) -> Any: ...
+    @classmethod
+    def get(cls, task_type: str, **kwargs: Any) -> LossStrategy: ...
+    @classmethod
+    def list_available(cls) -> list[str]: ...
+
+def get_loss_strategy(task_type: str, **kwargs: Any) -> LossStrategy: ...

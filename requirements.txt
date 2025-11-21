@@ -33,6 +33,11 @@ seaborn==0.13.2
 
 # Transformers & NLP
 transformers==4.57.1
+tokenizers==0.21.0
+tqdm==4.67.1
+
+# Image Processing
+pillow==11.1.0
 
 # Jupyter for local notebook development
 jupyter==1.1.1
