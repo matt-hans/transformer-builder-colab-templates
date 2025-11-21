@@ -80,6 +80,10 @@ class LanguageModelingDataCollator:
             batch['labels'] = labels
             batch['input_ids'] = masked_inputs
 
+        # Convert BatchEncoding to plain dict (HuggingFace #23138 workaround)
+        # tokenizer.pad() returns BatchEncoding which breaks ** unpacking in trainer
+        batch = dict(batch)
+
         return batch
 
     def _pad_examples(self, examples: List[Dict[str, Any]]) -> Dict[str, Any]:
