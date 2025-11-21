@@ -28,6 +28,24 @@ class LanguageModelingDataCollator:
         self.mlm_probability = mlm_probability
         self.padding_side = padding_side
 
+    def _safe_copy(self, data: Any) -> Any:
+        """
+        Copy data safely, handling both tensors and lists/numpy arrays.
+
+        Args:
+            data: torch.Tensor, list, or numpy.ndarray
+
+        Returns:
+            Copy of data (same type as input)
+        """
+        if torch.is_tensor(data):
+            return data.clone()  # PyTorch tensors use .clone()
+        elif hasattr(data, 'copy'):
+            return data.copy()   # Lists and numpy arrays use .copy()
+        else:
+            # Fallback: convert to list
+            return list(data)
+
     def __call__(self, examples: List[Dict[str, Any]]) -> Dict[str, Any]:
         # Use tokenizer.pad when available
         batch = None
@@ -55,7 +73,7 @@ class LanguageModelingDataCollator:
         if not self.mlm:
             # labels same as input_ids for causal LM
             # (model performs shifting internally)
-            batch['labels'] = [seq.copy() for seq in batch['input_ids']]
+            batch['labels'] = [self._safe_copy(seq) for seq in batch['input_ids']]
         else:
             input_ids = batch['input_ids']
             labels, masked_inputs = self._mask_tokens(input_ids)
@@ -96,14 +114,14 @@ class LanguageModelingDataCollator:
         mask_id = getattr(self.tokenizer, 'mask_token_id', None)
         if mask_id is None:
             # fallback: no masking; labels = input_ids
-            return ([s.copy() for s in input_ids], [s.copy() for s in input_ids])
+            return ([self._safe_copy(s) for s in input_ids], [self._safe_copy(s) for s in input_ids])
 
         labels: List[List[int]] = []
         masked_inputs: List[List[int]] = []
         special_ids = set(getattr(self.tokenizer, 'all_special_ids', []) or [])
         for seq in input_ids:
-            lbl = seq.copy()
-            inp = seq.copy()
+            lbl = self._safe_copy(seq)
+            inp = self._safe_copy(seq)
             for i, tok in enumerate(seq):
                 if tok in special_ids:
                     continue
