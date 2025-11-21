@@ -233,6 +233,48 @@ trainer = Trainer(model, model_config, config, task_spec)
 results = trainer.train(train_data, val_data)
 ```
 
+### 6. Data Module Selection
+
+**Two data modules available**:
+
+| Feature | SimpleDataModule | UniversalDataModule |
+|---------|------------------|---------------------|
+| **Location** | `utils/tokenization/data_module` | `utils/training/engine/data` |
+| **Requires Lightning** | ✅ Yes | ❌ No |
+| **Auto train/val split** | ❌ No | ✅ Yes |
+| **Reproducibility** | ⚠️ Basic | ✅ Full (seed, workers) |
+| **Dataset types** | PyTorch Dataset | HFDataset, Dataset, List[Tensor] |
+| **Collator** | Flag-based | Registry-based |
+| **Use case** | Pre-tokenized data | Any dataset type |
+
+**Quick examples**:
+
+```python
+# SimpleDataModule (Lightning users, pre-tokenized data)
+from utils.tokenization.data_module import SimpleDataModule
+
+data_module = SimpleDataModule(
+    train_dataset=train_data,
+    val_dataset=val_data,
+    task_spec=task_spec,
+    batch_size=32,
+    num_workers=2,
+    tokenizer=tokenizer
+)
+
+# UniversalDataModule (Engine users, any dataset)
+from utils.training.engine.data import UniversalDataModule
+
+data_module = UniversalDataModule(
+    train_data=train_data,      # Note: different parameter name
+    val_data=val_data,           # Note: different parameter name
+    task_spec=task_spec,
+    batch_size=32,
+    num_workers=2,
+    seed=42  # Full reproducibility
+)
+```
+
 ---
 
 ## Results Format

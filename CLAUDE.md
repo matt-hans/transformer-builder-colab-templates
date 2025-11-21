@@ -975,6 +975,43 @@ This design allows tests to work with:
 - Standard HuggingFace models
 - Arbitrary PyTorch nn.Module subclasses
 
+### Data Module Selection Guide
+
+**Two data modules available** (as of v4.0):
+
+1. **`SimpleDataModule`** (`utils/tokenization/data_module.py`):
+   - For **pre-tokenized** datasets
+   - Requires PyTorch Lightning
+   - Lightweight wrapper over DataLoader
+   - **Use when**: Data is already tokenized, need simple Lightning integration
+
+2. **`UniversalDataModule`** (`utils/training/engine/data.py`):
+   - For **any dataset type** (HuggingFace, PyTorch, List[Tensor])
+   - Framework-agnostic (no Lightning requirement)
+   - Auto train/val split, reproducibility, collator registry
+   - **Use when**: Need full training engine features, reproducibility, flexibility
+
+**Training notebook usage**:
+```python
+# Cell 8: Import both
+from utils.training.engine.data import UniversalDataModule
+from utils.tokenization.data_module import SimpleDataModule
+
+# Section 6: Use SimpleDataModule for pre-tokenized data
+data_module = SimpleDataModule(
+    train_dataset=final_train_data,
+    val_dataset=final_val_data,
+    task_spec=task_spec,
+    batch_size=training_config.batch_size,
+    num_workers=2,
+    tokenizer=tokenizer
+)
+```
+
+**Migration path** (optional):
+- v4.x: Both data modules supported
+- v5.0: `SimpleDataModule` may be deprecated in favor of `UniversalDataModule`
+
 ### Notebook Structure (`template.ipynb`)
 
 The Colab notebook follows a strict cell organization pattern:
