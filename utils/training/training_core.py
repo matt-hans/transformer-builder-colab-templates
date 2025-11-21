@@ -812,7 +812,13 @@ def run_training(
     # Defer heavy import to avoid circulars
     from .training_config import TrainingConfig
     from . import metrics_tracker as _mt  # noqa: F401  (reserved for future)
-    from ..tier3_training_utilities import test_fine_tuning
+    # NOTE: train_model() is deprecated - use utils.training.engine.trainer.Trainer instead
+    raise DeprecationWarning(
+        "train_model() is deprecated. Use the modern Trainer API:\n"
+        "  from utils.training.engine.trainer import Trainer\n"
+        "  trainer = Trainer(model, config, training_config, task_spec)\n"
+        "  results = trainer.train(train_data, val_data)"
+    )
 
     # Resolve epochs and batch size from config defaults
     epochs = getattr(training_config, 'epochs', 1) or 1

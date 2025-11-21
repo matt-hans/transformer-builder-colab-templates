@@ -6,7 +6,7 @@ Individual tiers can be imported directly for better modularity:
 
 - tier1_critical_validation: Core validation tests
 - tier2_advanced_analysis: Advanced diagnostic tests
-- tier3_training_utilities: Training and benchmarking tests
+- training.engine.trainer: Modular training API (replaces tier3)
 
 Usage:
     # Import from facade (backward compatible)
@@ -15,7 +15,9 @@ Usage:
     # Import from tier modules directly
     from tier1_critical_validation import test_shape_robustness
     from tier2_advanced_analysis import test_attention_patterns
-    from tier3_training_utilities import test_fine_tuning
+
+    # For training, use the modular Trainer API
+    from utils.training.engine.trainer import Trainer
 """
 
 # Re-export all functions from tier modules
@@ -34,11 +36,9 @@ from .tier2_advanced_analysis import (
     test_robustness,
 )
 
-from .tier3_training_utilities import (
-    test_fine_tuning,
-    test_hyperparameter_search,
-    test_benchmark_comparison,
-)
+# Tier 3 training utilities have been replaced with modular Trainer API
+# See: utils.training.engine.trainer.Trainer for modern training interface
+
 from .training.tier4_export_validation import run_tier4_export_validation
 
 # Import for utility functions
@@ -57,10 +57,6 @@ __all__ = [
     'test_attention_patterns',
     'test_attribution_analysis',
     'test_robustness',
-    # Tier 3: Training Utilities
-    'test_fine_tuning',
-    'test_hyperparameter_search',
-    'test_benchmark_comparison',
     # Tier 4: Export Validation
     'run_tier4_export_validation',
     # Utility functions
