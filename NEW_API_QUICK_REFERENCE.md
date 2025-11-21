@@ -387,6 +387,26 @@ print(TrainingCoordinator)
 
 **Related:** Cell 8 now includes validation that catches missing imports automatically. If you see "❌ Missing required classes", check which imports failed and ensure dependencies are installed.
 
+### AttributeError: "'Trainer' object has no attribute 'model_adapter'"
+
+**Cause:** Cell code attempts to access legacy API attribute on modern Trainer
+
+**Fix:** Modern Trainer API does not expose `model_adapter`. Flash Attention is automatic in PyTorch 2.0+.
+
+**Verification:**
+```python
+# Modern Trainer API (correct)
+trainer = Trainer(model, config, training_config, task_spec)
+results = trainer.train(train_data, val_data)  # Flash Attention applied automatically
+
+# If you need Flash Attention status, check PyTorch version
+import torch
+has_sdpa = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+print(f"Flash Attention available: {has_sdpa}")
+```
+
+**Note:** Flash Attention (SDPA) is automatically applied to `nn.MultiheadAttention` layers in PyTorch 2.0+ on CUDA devices. No manual configuration required. The training cell no longer displays Flash Attention status since it's an automatic optimization.
+
 ---
 
 ## FAQ
