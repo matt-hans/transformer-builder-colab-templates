@@ -32,23 +32,33 @@ class DummyTokenizer:
 
 
 def test_dynamic_padding_right_side():
+    import torch
     tok = DummyTokenizer(pad_token_id=0)
     collator = LanguageModelingDataCollator(tok, mlm=False, padding_side='right')
     ex = [{'input_ids': [1,2,3]}, {'input_ids': [4,5]}]
     batch = collator(ex)
-    assert batch['input_ids'] == [[1,2,3],[4,5,0]]
-    assert batch['labels'] == [[1,2,3],[4,5,0]]
-    assert batch['attention_mask'] == [[1,1,1],[1,1,0]]
+    # Collator now returns tensors (not lists) for compatibility with loss functions
+    assert torch.is_tensor(batch['input_ids']), "input_ids should be tensor"
+    assert torch.is_tensor(batch['labels']), "labels should be tensor"
+    assert torch.is_tensor(batch['attention_mask']), "attention_mask should be tensor"
+    assert batch['input_ids'].tolist() == [[1,2,3],[4,5,0]]
+    assert batch['labels'].tolist() == [[1,2,3],[4,5,0]]
+    assert batch['attention_mask'].tolist() == [[1,1,1],[1,1,0]]
 
 
 def test_dynamic_padding_left_side():
+    import torch
     tok = DummyTokenizer(pad_token_id=0)
     collator = LanguageModelingDataCollator(tok, mlm=False, padding_side='left')
     ex = [{'input_ids': [7,8]},{'input_ids':[9]}]
     batch = collator(ex)
-    assert batch['input_ids'] == [[7,8],[0,9]]
-    assert batch['labels'] == [[7,8],[0,9]]
-    assert batch['attention_mask'] == [[1,1],[0,1]]
+    # Collator now returns tensors (not lists) for compatibility with loss functions
+    assert torch.is_tensor(batch['input_ids']), "input_ids should be tensor"
+    assert torch.is_tensor(batch['labels']), "labels should be tensor"
+    assert torch.is_tensor(batch['attention_mask']), "attention_mask should be tensor"
+    assert batch['input_ids'].tolist() == [[7,8],[0,9]]
+    assert batch['labels'].tolist() == [[7,8],[0,9]]
+    assert batch['attention_mask'].tolist() == [[1,1],[0,1]]
 
 
 def test_tensor_compatibility():

@@ -46,6 +46,39 @@ class LanguageModelingDataCollator:
             # Fallback: convert to list
             return list(data)
 
+    def _ensure_tensors(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert all list values in batch to PyTorch tensors.
+
+        Handles both list of tensors (from HuggingFace tokenizer) and list of lists.
+        Required because loss functions expect tensors with .ndim/.shape attributes.
+
+        Args:
+            batch: Dict with 'input_ids', 'attention_mask', 'labels' as lists or tensors
+
+        Returns:
+            Dict with all values as PyTorch tensors
+        """
+        result = {}
+        for key, value in batch.items():
+            if torch.is_tensor(value):
+                # Already a tensor, keep as-is
+                result[key] = value
+            elif isinstance(value, list):
+                if len(value) == 0:
+                    # Empty list, convert to empty tensor
+                    result[key] = torch.tensor(value)
+                elif torch.is_tensor(value[0]):
+                    # List of tensors (e.g., from tokenizer.pad with return_tensors=None)
+                    result[key] = torch.stack(value)
+                else:
+                    # List of lists/ints (e.g., from _pad_examples)
+                    result[key] = torch.tensor(value)
+            else:
+                # Other types (int, str, etc.), keep as-is
+                result[key] = value
+        return result
+
     def __call__(self, examples: List[Dict[str, Any]]) -> Dict[str, Any]:
         # Use tokenizer.pad when available
         batch = None
@@ -83,6 +116,10 @@ class LanguageModelingDataCollator:
         # Convert BatchEncoding to plain dict (HuggingFace #23138 workaround)
         # tokenizer.pad() returns BatchEncoding which breaks ** unpacking in trainer
         batch = dict(batch)
+
+        # Convert lists to tensors (required for loss computation)
+        # tokenizer.pad() with return_tensors=None returns lists, but trainer expects tensors
+        batch = self._ensure_tensors(batch)
 
         return batch
 
