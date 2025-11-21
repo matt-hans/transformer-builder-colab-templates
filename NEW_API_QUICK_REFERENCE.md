@@ -366,6 +366,27 @@ results = trainer.train(
 )
 ```
 
+### NameError: "name 'TrainingCoordinator' is not defined"
+
+**Cause:** Missing import in infrastructure imports cell (Cell 8)
+
+**Fix:**
+```python
+# Add to Cell 8 (infrastructure imports)
+from utils.training.training_core import TrainingCoordinator
+```
+
+**Verification:**
+```python
+# After Cell 8, run:
+print(TrainingCoordinator)
+# Expected: <class 'utils.training.training_core.TrainingCoordinator'>
+```
+
+**Note:** Similar to `SimpleDataModule` import issue. Both TrainingCoordinator and SimpleDataModule must be explicitly imported in Cell 8. If you're missing either, re-download utils/ and verify all infrastructure imports are present.
+
+**Related:** Cell 8 now includes validation that catches missing imports automatically. If you see "❌ Missing required classes", check which imports failed and ensure dependencies are installed.
+
 ---
 
 ## FAQ

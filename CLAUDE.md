@@ -1012,6 +1012,52 @@ data_module = SimpleDataModule(
 - v4.x: Both data modules supported
 - v5.0: `SimpleDataModule` may be deprecated in favor of `UniversalDataModule`
 
+### Training API Architecture
+
+**Two Training APIs Available** (as of v4.0):
+
+1. **Modern API** (`utils/training/engine/trainer.Trainer`):
+   - Modular v4.0 engine architecture
+   - Framework-agnostic (no Lightning required)
+   - Recommended for new code
+   - Full control over training loop components
+
+2. **Legacy API** (`utils/training/training_core.TrainingCoordinator`):
+   - PyTorch Lightning-based orchestration
+   - Available for backward compatibility
+   - Used in training.ipynb Section 6
+   - Simpler interface for quick prototyping
+
+**Import Requirements**:
+```python
+# Modern API
+from utils.training.engine.trainer import Trainer
+
+# Legacy API
+from utils.training.training_core import TrainingCoordinator
+```
+
+**Training notebook usage** (Section 6):
+```python
+# Cell 8: Import both APIs
+from utils.training.engine.trainer import Trainer
+from utils.training.training_core import TrainingCoordinator
+
+# Section 6: Uses TrainingCoordinator (Lightning-based)
+coordinator = TrainingCoordinator(
+    output_dir=training_config.checkpoint_dir,
+    use_gpu=torch.cuda.is_available(),
+    max_epochs=training_config.epochs,
+    precision_str='32-true'
+)
+```
+
+**When to Use**:
+- **Trainer**: New projects, production pipelines, framework-agnostic workflows, microservices
+- **TrainingCoordinator**: Existing notebooks, Lightning integration, quick prototyping, research
+
+**Migration Path**: v5.0 may deprecate `TrainingCoordinator` in favor of unified `Trainer` API.
+
 ### Notebook Structure (`template.ipynb`)
 
 The Colab notebook follows a strict cell organization pattern:
