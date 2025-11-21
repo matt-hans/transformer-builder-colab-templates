@@ -204,6 +204,8 @@ class Trainer:
         config: Union[SimpleNamespace, Any],  # Model config
         training_config: TrainingConfig,
         task_spec: Optional[TaskSpec] = None,
+        tokenizer: Optional[Any] = None,
+        data_collator: Optional[Callable] = None,
         hooks: Optional[TrainingHooks] = None
     ):
         """
@@ -214,18 +216,35 @@ class Trainer:
             config: Model configuration (SimpleNamespace or custom config object)
             training_config: Training hyperparameters and settings
             task_spec: Task specification for data loading and loss computation
+            tokenizer: Optional tokenizer for text tasks (enables auto-collator selection)
+            data_collator: Optional manual collator (overrides auto-selection)
             hooks: Optional training lifecycle hooks
 
         Raises:
-            ValueError: If training_config validation fails
+            ValueError: If training_config validation fails or text task missing tokenizer/collator
         """
         # Validate configuration first
         training_config.validate()
+
+        # Validate text task requirements
+        if task_spec and task_spec.modality == 'text':
+            if tokenizer is None and data_collator is None:
+                raise ValueError(
+                    "Text tasks require either:\n"
+                    "  1. tokenizer (for auto-collator selection), OR\n"
+                    "  2. data_collator (for manual collation)\n\n"
+                    "Example:\n"
+                    "  trainer = Trainer(..., tokenizer=tokenizer)\n"
+                    "  # OR\n"
+                    "  trainer = Trainer(..., data_collator=data_collator)"
+                )
 
         self.model = model
         self.config = config
         self.training_config = training_config
         self.task_spec = task_spec
+        self.tokenizer = tokenizer
+        self.data_collator = data_collator
         self.hooks = hooks or DefaultHooks()
 
         # Move model to GPU if available
@@ -434,13 +453,15 @@ class Trainer:
         train_data: Union[Dataset, HFDataset, DataLoader],
         val_data: Optional[Union[Dataset, HFDataset, DataLoader]]
     ) -> None:
-        """Setup data loaders with reproducible configuration."""
+        """Setup data loaders with tokenizer/collator for proper batching."""
         # Use UniversalDataModule if task_spec provided
         if self.task_spec:
             self.data_module = UniversalDataModule(
                 train_data=train_data,
                 val_data=val_data,
                 task_spec=self.task_spec,
+                tokenizer=self.tokenizer,
+                data_collator=self.data_collator,
                 batch_size=self.training_config.batch_size,
                 num_workers=0,  # Single-threaded for reproducibility
                 seed=self.training_config.random_seed

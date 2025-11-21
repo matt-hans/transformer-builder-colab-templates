@@ -409,6 +409,96 @@ print(f"Flash Attention available: {has_sdpa}")
 
 ---
 
+## Tokenizer Integration (CRITICAL for Text Tasks)
+
+**Required as of v4.0+**: Text tasks now require explicit tokenizer or data_collator to enable proper data collation for variable-length sequences.
+
+### Why This Is Required
+
+Text data has variable-length sequences that need padding/truncation before batching:
+- Sentence 1: `[101, 2023, ...]` (length 57)
+- Sentence 2: `[101, 1045, ...]` (length 198)
+
+Without a proper collator, PyTorch's `default_collate` attempts `torch.stack()` on mismatched shapes → **RuntimeError**.
+
+### Option 1: Pass Tokenizer (Recommended)
+
+Enables automatic collator selection:
+
+```python
+from utils.tokenization.adaptive_tokenizer import AdaptiveTokenizer
+
+# Create tokenizer
+tokenizer = AdaptiveTokenizer.load_or_create(
+    vocab_size=config.vocab_size,
+    dataset=train_data
+)
+
+# Pass to Trainer (enables auto-collation)
+trainer = Trainer(
+    model=model,
+    config=config,
+    training_config=training_config,
+    task_spec=task_spec,
+    tokenizer=tokenizer  # ✅ AUTO-COLLATOR SELECTION
+)
+
+results = trainer.train(train_data, val_data)
+```
+
+### Option 2: Pass Manual Collator
+
+For custom collation logic:
+
+```python
+from utils.tokenization.data_collator import LanguageModelingDataCollator
+
+# Create custom collator
+data_collator = LanguageModelingDataCollator(
+    tokenizer=tokenizer,
+    mlm=False,
+    padding_side='right'
+)
+
+# Pass to Trainer (manual collation)
+trainer = Trainer(
+    model=model,
+    config=config,
+    training_config=training_config,
+    task_spec=task_spec,
+    data_collator=data_collator  # ✅ MANUAL COLLATION
+)
+
+results = trainer.train(train_data, val_data)
+```
+
+### Vision Tasks: No Tokenizer Required
+
+```python
+# Vision tasks work without tokenizer (automatic vision collator)
+trainer = Trainer(
+    model=model,
+    config=config,
+    training_config=training_config,
+    task_spec=TaskSpec.vision_tiny()  # ✅ NO TOKENIZER NEEDED
+)
+```
+
+### Common Error: Missing Tokenizer
+
+```
+ValueError: Text tasks require either:
+  1. tokenizer (for auto-collator selection), OR
+  2. data_collator (for manual collation)
+
+Example:
+  trainer = Trainer(..., tokenizer=tokenizer)
+```
+
+**Fix**: Add `tokenizer=tokenizer` parameter to `Trainer()` initialization.
+
+---
+
 ## FAQ
 
 ### Q: Why was the old API removed?

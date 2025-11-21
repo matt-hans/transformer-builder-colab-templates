@@ -371,7 +371,8 @@ class DataLoaderFactory:
         dataset: Union[Dataset, HFDataset, List[torch.Tensor]],
         config: DataLoaderConfig,
         task_spec: Optional[TaskSpec] = None,
-        tokenizer: Optional[Any] = None
+        tokenizer: Optional[Any] = None,
+        data_collator: Optional[Callable] = None
     ) -> DataLoader:
         """
         Create DataLoader with optimizations and reproducibility guarantees.
@@ -381,6 +382,7 @@ class DataLoaderFactory:
             config: DataLoader configuration
             task_spec: Optional TaskSpec for auto-collator selection
             tokenizer: Optional tokenizer (required for text tasks)
+            data_collator: Optional manual collator (overrides auto-selection)
 
         Returns:
             Configured DataLoader
@@ -407,8 +409,15 @@ class DataLoaderFactory:
             logger.debug(f"Converting List[Tensor] ({len(dataset)} samples) to TensorDataset")
             dataset = TensorDataset(torch.stack(dataset))
 
-        # Select collator
-        collate_fn = self._get_collate_fn(config, task_spec, tokenizer)
+        # Select collator with priority: manual > configured > auto-selection
+        if data_collator is not None:
+            collate_fn = data_collator
+            logger.info(f"Using manual collator: {data_collator.__class__.__name__}")
+        elif config.collate_fn is not None:
+            collate_fn = config.collate_fn
+            logger.info(f"Using configured collator: {config.collate_fn.__class__.__name__}")
+        else:
+            collate_fn = self._get_collate_fn(config, task_spec, tokenizer)
 
         # Create seeded generator for reproducible shuffling
         generator = create_seeded_generator(config.seed) if config.shuffle else None
@@ -454,11 +463,23 @@ class DataLoaderFactory:
                     task_spec=task_spec,
                     tokenizer=tokenizer
                 )
+                logger.info(f"✅ Auto-selected collator: {collator.__class__.__name__}")
                 # get_collator returns Any (could be various collator classes)
                 # All collators are callable, so this is safe
                 return collator  # type: ignore[no-any-return]
+            except ValueError as e:
+                if 'tokenizer required' in str(e):
+                    raise ValueError(
+                        f"Failed to create text collator: {e}\n\n"
+                        f"Text tasks require a tokenizer. Solutions:\n"
+                        f"  1. Pass tokenizer to Trainer: Trainer(..., tokenizer=tokenizer)\n"
+                        f"  2. Pass manual collator: Trainer(..., data_collator=collator)\n"
+                        f"  3. Pre-tokenize data to uniform shape\n"
+                    ) from e
+                raise
             except Exception as e:
                 logger.warning(f"Failed to auto-select collator: {e}")
+                logger.warning(f"Falling back to default_collate (requires uniform shapes)")
                 return None
 
         # No collator specified
@@ -509,6 +530,7 @@ class UniversalDataModule:
         val_data: Optional[Union[Dataset, HFDataset, List[torch.Tensor]]] = None,
         task_spec: Optional[TaskSpec] = None,
         tokenizer: Optional[Any] = None,
+        data_collator: Optional[Callable] = None,
         batch_size: int = 32,
         val_split: float = 0.2,
         num_workers: int = 2,
@@ -522,7 +544,8 @@ class UniversalDataModule:
             train_data: Training dataset (HF Dataset, PyTorch Dataset, or List[Tensor])
             val_data: Optional validation dataset (None for auto-split)
             task_spec: TaskSpec for collator auto-selection
-            tokenizer: Optional tokenizer for text tasks
+            tokenizer: Optional tokenizer for text tasks (enables auto-collator selection)
+            data_collator: Optional manual collator (overrides auto-selection)
             batch_size: Batch size for training and validation
             val_split: Fraction of train_data for validation (if val_data=None)
             num_workers: Number of data loading workers
@@ -533,6 +556,7 @@ class UniversalDataModule:
         self.val_data = val_data
         self.task_spec = task_spec
         self.tokenizer = tokenizer
+        self.data_collator = data_collator
         self.batch_size = batch_size
         self.val_split = val_split
         self.num_workers = num_workers
@@ -569,7 +593,8 @@ class UniversalDataModule:
             dataset=self.train_data,
             config=config,
             task_spec=self.task_spec,
-            tokenizer=self.tokenizer
+            tokenizer=self.tokenizer,
+            data_collator=self.data_collator
         )
 
     def val_dataloader(self) -> Optional[DataLoader]:
@@ -593,7 +618,8 @@ class UniversalDataModule:
             dataset=self.val_data,
             config=config,
             task_spec=self.task_spec,
-            tokenizer=self.tokenizer
+            tokenizer=self.tokenizer,
+            data_collator=self.data_collator
         )
 
     def _create_val_split(self) -> None:
