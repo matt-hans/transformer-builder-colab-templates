@@ -448,6 +448,65 @@ class Trainer:
 
         return scheduler
 
+    def _call_model_forward(self, batch: Dict[str, Any]) -> Any:
+        """
+        Call model forward() with automatic signature detection.
+
+        Handles both HuggingFace models (keyword args) and custom Transformer Builder
+        models (positional args with custom parameter names like 'input_0_tokens').
+
+        Args:
+            batch: Dict containing 'input_ids', 'attention_mask', 'labels', etc.
+
+        Returns:
+            Model outputs (logits, hidden states, etc.)
+        """
+        import inspect
+
+        # Get forward method signature
+        sig = inspect.signature(self.model.forward)
+        params = list(sig.parameters.keys())
+
+        # Remove 'self' from params
+        if 'self' in params:
+            params.remove('self')
+
+        # Check if forward accepts **kwargs (VAR_KEYWORD)
+        has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in sig.parameters.values()
+        )
+
+        if has_var_keyword:
+            # HuggingFace-style: supports **kwargs, pass full batch
+            return self.model(**batch)
+        elif len(params) > 1:
+            # Multi-parameter model (input_ids, attention_mask, etc.)
+            # Try to match batch keys to parameter names
+            model_inputs = {}
+            for param_name in params:
+                if param_name in batch:
+                    model_inputs[param_name] = batch[param_name]
+            return self.model(**model_inputs)
+        else:
+            # Single positional parameter (custom Transformer Builder models)
+            # Parameter name may be 'input_ids', 'input_0_tokens', 'x', etc.
+            first_param = params[0] if params else 'input_ids'
+
+            # Try to match the exact parameter name from batch
+            if first_param in batch:
+                return self.model(batch[first_param])
+            elif 'input_ids' in batch:
+                # Standard case: batch has 'input_ids', pass it positionally
+                # Model will receive it as its first parameter (whatever name it uses)
+                return self.model(batch['input_ids'])
+            else:
+                # Last resort: try first tensor in batch
+                for value in batch.values():
+                    if isinstance(value, torch.Tensor):
+                        return self.model(value)
+                raise ValueError(f"Could not find appropriate input tensor in batch keys: {batch.keys()}")
+
     def _setup_data(
         self,
         train_data: Union[Dataset, HFDataset, DataLoader],
@@ -550,8 +609,12 @@ class Trainer:
                 batch = tuple(x.to(self.device) if isinstance(x, torch.Tensor) else x
                             for x in batch)
 
-            # Forward pass
-            outputs = self.model(**batch if isinstance(batch, dict) else {'input_ids': batch[0]})
+            # Forward pass (with signature detection for custom models)
+            if isinstance(batch, dict):
+                outputs = self._call_model_forward(batch)
+            else:
+                # Handle tuple/list batch format
+                outputs = self._call_model_forward({'input_ids': batch[0]})
             model_output = ModelOutput.from_raw(outputs)
 
             # Compute loss using strategy
@@ -628,8 +691,12 @@ class Trainer:
                     batch = tuple(x.to(self.device) if isinstance(x, torch.Tensor) else x
                                 for x in batch)
 
-                # Forward pass
-                outputs = self.model(**batch if isinstance(batch, dict) else {'input_ids': batch[0]})
+                # Forward pass (with signature detection for custom models)
+                if isinstance(batch, dict):
+                    outputs = self._call_model_forward(batch)
+                else:
+                    # Handle tuple/list batch format
+                    outputs = self._call_model_forward({'input_ids': batch[0]})
                 model_output = ModelOutput.from_raw(outputs)
 
                 # Compute loss
