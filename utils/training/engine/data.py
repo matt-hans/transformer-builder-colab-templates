@@ -256,7 +256,8 @@ class CollatorRegistry:
             return LanguageModelingDataCollator(
                 tokenizer=tokenizer,
                 mlm=mlm,
-                padding_side=padding_side
+                padding_side=padding_side,
+                task_spec=task_spec  # Enable task-aware sequence length validation
             )
 
         # Vision collator factory

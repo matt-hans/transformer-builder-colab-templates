@@ -8,6 +8,9 @@ objectives without requiring transformers at import time.
 
 from typing import List, Dict, Any, Optional, Tuple
 import torch
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class LanguageModelingDataCollator:
@@ -22,11 +25,27 @@ class LanguageModelingDataCollator:
                  tokenizer: Any,
                  mlm: bool = False,
                  mlm_probability: float = 0.15,
-                 padding_side: str = 'right'):
+                 padding_side: str = 'right',
+                 task_spec: Optional[Any] = None):
         self.tokenizer = tokenizer
         self.mlm = mlm
         self.mlm_probability = mlm_probability
         self.padding_side = padding_side
+        self.task_spec = task_spec
+
+        # Determine minimum sequence length based on task type (for general-purpose platform)
+        if task_spec:
+            task_type = getattr(task_spec, 'task_type', 'unknown')
+            if task_type in ['language_modeling', 'causal_lm']:
+                self.min_seq_len = 2  # Causal LM requires >= 2 tokens for token shifting
+            elif task_type == 'classification':
+                self.min_seq_len = 1  # Classification can work with single tokens
+            else:
+                self.min_seq_len = 1  # Conservative default for unknown tasks
+                logger.debug(f"Unknown task type '{task_type}', using min_seq_len=1")
+        else:
+            self.min_seq_len = 1  # No task_spec provided, be permissive
+            logger.debug("No task_spec provided to collator, using min_seq_len=1")
 
     def _safe_copy(self, data: Any) -> Any:
         """
@@ -73,6 +92,20 @@ class LanguageModelingDataCollator:
                     result[key] = torch.stack(value)
                 else:
                     # List of lists/ints (e.g., from _pad_examples)
+                    # Validate uniform length before tensor conversion to prevent ragged list bugs
+                    if value:  # Non-empty list
+                        lengths = [len(item) if isinstance(item, (list, tuple)) else 1 for item in value]
+                        if len(set(lengths)) > 1:
+                            raise ValueError(
+                                f"Cannot convert ragged list to tensor for key '{key}'. "
+                                f"Sequence lengths: {lengths}. "
+                                f"This indicates dataset contains mixed-length or empty sequences. "
+                                f"Common causes:\n"
+                                f"  - Empty text samples that tokenize to []\n"
+                                f"  - Variable-length sequences without proper padding\n"
+                                f"  - Data preprocessing issues\n"
+                                f"Fix: Ensure all sequences in batch have consistent length or filter short sequences."
+                            )
                     result[key] = torch.tensor(value)
             else:
                 # Other types (int, str, etc.), keep as-is
@@ -80,6 +113,48 @@ class LanguageModelingDataCollator:
         return result
 
     def __call__(self, examples: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # LAYER 2: Task-aware sequence length filtering
+        # Filter out sequences that are too short for the current task
+        valid_examples = [
+            ex for ex in examples
+            if len(ex.get('input_ids', [])) >= self.min_seq_len
+        ]
+
+        filtered_count = len(examples) - len(valid_examples)
+
+        # Calculate filter rate
+        filter_rate = filtered_count / len(examples) if examples else 0
+
+        # TRANSPARENCY: Always log when filtering occurs
+        if filtered_count > 0:
+            task_name = self.task_spec.task_type if self.task_spec else "unknown"
+            logger.warning(
+                f"📊 Data Quality Alert: Filtered {filtered_count}/{len(examples)} sequences "
+                f"(< {self.min_seq_len} tokens for {task_name} task). "
+                f"Filter rate: {filter_rate:.1%}. "
+                f"Consider cleaning your dataset to remove empty/short samples."
+            )
+
+        # FAIL-FAST: If >10% of sequences filtered, likely systemic data quality issue
+        if filter_rate > 0.10:
+            task_name = self.task_spec.task_type if self.task_spec else "unknown"
+            raise ValueError(
+                f"❌ Data Quality Error: {filter_rate:.1%} of sequences are too short "
+                f"(< {self.min_seq_len} tokens for {task_name} task).\n\n"
+                f"This indicates a systemic data quality issue. "
+                f"Filtered {filtered_count} of {len(examples)} sequences in this batch.\n\n"
+                f"Solutions:\n"
+                f"  1. Filter dataset before training:\n"
+                f"     dataset = dataset.filter(lambda x: len(x['input_ids']) >= {self.min_seq_len})\n"
+                f"  2. Check tokenization: Ensure text samples aren't empty or whitespace-only\n"
+                f"  3. Review preprocessing: Remove invalid samples upstream\n\n"
+                f"For causal language modeling, sequences must have at least 2 tokens for token shifting.\n"
+                f"For classification, single-token sequences may be acceptable."
+            )
+
+        # Continue with filtered examples
+        examples = valid_examples
+
         # Use tokenizer.pad when available
         batch = None
         if hasattr(self.tokenizer, 'pad'):

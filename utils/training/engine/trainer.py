@@ -608,70 +608,104 @@ class Trainer:
 
         logger.debug(f"Training epoch {epoch} with {len(train_loader)} batches")
 
+        # LAYER 3: Track skipped batches for graceful error recovery
+        skipped_batches = 0
+
         for batch_idx, batch in enumerate(train_loader):
-            # Move batch to device
-            if isinstance(batch, dict):
-                batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-                        for k, v in batch.items()}
-            elif isinstance(batch, (tuple, list)):
-                batch = tuple(x.to(self.device) if isinstance(x, torch.Tensor) else x
-                            for x in batch)
+            try:
+                # Move batch to device
+                if isinstance(batch, dict):
+                    batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                            for k, v in batch.items()}
+                elif isinstance(batch, (tuple, list)):
+                    batch = tuple(x.to(self.device) if isinstance(x, torch.Tensor) else x
+                                for x in batch)
 
-            # Forward pass (with signature detection for custom models)
-            if isinstance(batch, dict):
-                outputs = self._call_model_forward(batch)
-            else:
-                # Handle tuple/list batch format
-                outputs = self._call_model_forward({'input_ids': batch[0]})
-            model_output = ModelOutput.from_raw(outputs)
+                # Forward pass (with signature detection for custom models)
+                if isinstance(batch, dict):
+                    outputs = self._call_model_forward(batch)
+                else:
+                    # Handle tuple/list batch format
+                    outputs = self._call_model_forward({'input_ids': batch[0]})
+                model_output = ModelOutput.from_raw(outputs)
 
-            # Compute loss using strategy
-            loss_inputs = self._prepare_loss_inputs(batch, model_output)
-            loss = self.loss_strategy.compute_loss(loss_inputs)
+                # Compute loss using strategy
+                loss_inputs = self._prepare_loss_inputs(batch, model_output)
+                loss = self.loss_strategy.compute_loss(loss_inputs)
 
-            # Debug: Check for nan loss and log details (with safe tensor inspection)
-            if torch.isnan(loss):
-                try:
-                    logits_info = self._safe_tensor_inspect(loss_inputs['logits'], 'logits')
-                    labels_info = self._safe_tensor_inspect(loss_inputs['labels'], 'labels')
-                    logger.error(
-                        f"NAN loss detected at batch {batch_idx}!\n"
-                        f"  {logits_info}\n"
-                        f"  {labels_info}"
+                # Debug: Check for nan loss and log details (with safe tensor inspection)
+                if torch.isnan(loss):
+                    try:
+                        logits_info = self._safe_tensor_inspect(loss_inputs['logits'], 'logits')
+                        labels_info = self._safe_tensor_inspect(loss_inputs['labels'], 'labels')
+                        logger.error(
+                            f"NAN loss detected at batch {batch_idx}!\n"
+                            f"  {logits_info}\n"
+                            f"  {labels_info}"
+                        )
+                    except Exception as e:
+                        # Ultimate safety: even diagnostic failures shouldn't crash training
+                        logger.error(
+                            f"NAN loss detected at batch {batch_idx} "
+                            f"(diagnostic inspection failed: {e.__class__.__name__})"
+                        )
+
+                # Gradient accumulation handles: scaling, backward, clipping, optimizer step
+                is_final_batch = (batch_idx == len(train_loader) - 1)
+                did_step = self.gradient_accumulator.accumulate(
+                    loss=loss,
+                    model=self.model,
+                    is_final_batch=is_final_batch
+                )
+
+                # Scheduler step when optimizer stepped
+                if did_step and self.scheduler is not None:
+                    self.scheduler.step()
+
+                # Track metrics
+                total_loss += loss.item()
+
+                # Compute accuracy if possible
+                if hasattr(model_output, 'logits') and 'labels' in batch:
+                    labels = batch['labels'] if isinstance(batch, dict) else batch[1]
+                    predictions = model_output.logits.argmax(dim=-1)
+                    mask = labels != -100  # Exclude padding
+                    correct = (predictions == labels) & mask
+                    total_correct += correct.sum().item()
+                    total_tokens += mask.sum().item()
+
+                # Hook callback
+                self.hooks.on_batch_end(batch_idx, loss.item())
+
+            except ValueError as e:
+                # LAYER 3: Graceful degradation for known data quality issues
+                error_msg = str(e)
+                if any(keyword in error_msg for keyword in
+                       ['seq_len', 'token shifting', 'ragged list', 'empty', 'mixed-length']):
+                    logger.warning(
+                        f"⚠️  Skipping batch {batch_idx} due to data quality issue:\n"
+                        f"    {str(e)[:150]}..."
                     )
-                except Exception as e:
-                    # Ultimate safety: even diagnostic failures shouldn't crash training
-                    logger.error(
-                        f"NAN loss detected at batch {batch_idx} "
-                        f"(diagnostic inspection failed: {e.__class__.__name__})"
-                    )
+                    skipped_batches += 1
 
-            # Gradient accumulation handles: scaling, backward, clipping, optimizer step
-            is_final_batch = (batch_idx == len(train_loader) - 1)
-            did_step = self.gradient_accumulator.accumulate(
-                loss=loss,
-                model=self.model,
-                is_final_batch=is_final_batch
-            )
+                    # Safety check: fail if skip rate > 1% (systemic issue)
+                    skip_rate = skipped_batches / (batch_idx + 1)
+                    if skip_rate > 0.01:
+                        raise RuntimeError(
+                            f"❌ Training aborted: {skip_rate:.1%} of batches skipped "
+                            f"({skipped_batches}/{batch_idx+1} batches).\n\n"
+                            f"This indicates a systemic data quality issue.\n"
+                            f"Your dataset has too many problematic sequences.\n\n"
+                            f"Please clean your dataset before training:\n"
+                            f"  - Remove empty or very short text samples\n"
+                            f"  - Ensure all sequences have minimum length for your task\n"
+                            f"  - Filter dataset: dataset = dataset.filter(lambda x: len(x['input_ids']) >= 2)"
+                        )
 
-            # Scheduler step when optimizer stepped
-            if did_step and self.scheduler is not None:
-                self.scheduler.step()
-
-            # Track metrics
-            total_loss += loss.item()
-
-            # Compute accuracy if possible
-            if hasattr(model_output, 'logits') and 'labels' in batch:
-                labels = batch['labels'] if isinstance(batch, dict) else batch[1]
-                predictions = model_output.logits.argmax(dim=-1)
-                mask = labels != -100  # Exclude padding
-                correct = (predictions == labels) & mask
-                total_correct += correct.sum().item()
-                total_tokens += mask.sum().item()
-
-            # Hook callback
-            self.hooks.on_batch_end(batch_idx, loss.item())
+                    continue  # Skip to next batch
+                else:
+                    # Unknown ValueError, don't skip - raise to surface the error
+                    raise
 
         # Compute epoch metrics
         avg_loss = total_loss / len(train_loader)
