@@ -60,6 +60,7 @@ from utils.training.engine.loss import get_loss_strategy, LossStrategy, LossInpu
 from utils.training.engine.gradient_monitor import GradientMonitor
 from utils.training.engine.gradient_accumulator import GradientAccumulator
 from utils.training.engine.data import DataLoaderFactory, DataLoaderConfig, UniversalDataModule
+from utils.training.engine.progress_hooks import ProgressBarHooks
 
 # Import existing utilities
 from utils.training.metrics_tracker import MetricsTracker
@@ -245,7 +246,7 @@ class Trainer:
         self.task_spec = task_spec
         self.tokenizer = tokenizer
         self.data_collator = data_collator
-        self.hooks = hooks or DefaultHooks()
+        self.hooks = hooks or ProgressBarHooks(update_freq=10)
 
         # Move model to GPU if available
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -600,6 +601,13 @@ class Trainer:
         else:
             train_loader = self.train_loader
 
+        # Check for empty training data
+        if len(train_loader) == 0:
+            logger.error("Training loader is empty! No batches to process.")
+            return {'loss': float('nan'), 'accuracy': 0.0}
+
+        logger.debug(f"Training epoch {epoch} with {len(train_loader)} batches")
+
         for batch_idx, batch in enumerate(train_loader):
             # Move batch to device
             if isinstance(batch, dict):
@@ -620,6 +628,14 @@ class Trainer:
             # Compute loss using strategy
             loss_inputs = self._prepare_loss_inputs(batch, model_output)
             loss = self.loss_strategy.compute_loss(loss_inputs)
+
+            # Debug: Check for nan loss and log details
+            if torch.isnan(loss):
+                logger.error(
+                    f"NAN loss detected at batch {batch_idx}! "
+                    f"logits range: [{loss_inputs['logits'].min():.2f}, {loss_inputs['logits'].max():.2f}], "
+                    f"labels: {loss_inputs['labels'][:5]}"  # First 5 labels for debugging
+                )
 
             # Gradient accumulation handles: scaling, backward, clipping, optimizer step
             is_final_batch = (batch_idx == len(train_loader) - 1)
