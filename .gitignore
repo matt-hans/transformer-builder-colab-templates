@@ -63,3 +63,8 @@ config_*.json
 
 # Allow example configs for documentation
 !config.example.json
+
+# ==============================================================================
+# Git Worktrees (Superpowers)
+# ==============================================================================
+.worktrees/
