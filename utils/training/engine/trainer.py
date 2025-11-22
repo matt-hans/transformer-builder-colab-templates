@@ -795,17 +795,21 @@ class Trainer:
 
     def _validate_data_quality(self, train_loader, val_loader=None):
         """
-        Pre-training data quality validation (general-purpose).
+        Pre-training data quality validation with sequence length verification.
 
-        Checks:
-        - Dataset is not empty
-        - Sequences meet task requirements
-        - No excessive filtering at collation time
+        Three-layer validation strategy:
+        - Layer 1: Dataset validation (preprocessing - user's responsibility)
+        - Layer 2: Trainer validation (this method - verify preprocessing worked)
+        - Layer 3: Collator safety net (empty batch check only)
+
+        This is Layer 2: Samples batches to verify preprocessing wasn't skipped.
 
         Raises:
             ValueError: If data quality issues detected
         """
-        # Check 1: Non-empty dataset
+        import itertools
+
+        # Check 1: Non-empty dataset (existing check)
         if len(train_loader) == 0:
             raise ValueError(
                 "Training dataset is empty after collation. "
@@ -820,15 +824,67 @@ class Trainer:
                 "  - Use utils.training.data_quality.filter_short_sequences() before training"
             )
 
-        # Check 2: Sample a batch to verify data quality
-        try:
-            first_batch = next(iter(train_loader))
-            logger.debug(f"Sample batch keys: {first_batch.keys()}")
-            logger.debug(f"Sample batch size: {len(first_batch.get('input_ids', []))}")
-        except StopIteration:
+        # Check 2: Sample batches to verify sequence lengths (NEW)
+        logger.info("Sampling batches to verify data quality...")
+
+        # Determine min_seq_len from task type
+        from utils.training.constants import TASK_MIN_SEQ_LEN
+        task_type = getattr(self.task_spec, 'task_type', 'unknown')
+        min_seq_len = TASK_MIN_SEQ_LEN.get(task_type, 1)
+
+        # Sample first 10 batches (or all if fewer)
+        sampled_batches = list(itertools.islice(train_loader, 10))
+
+        if len(sampled_batches) == 0:
             raise ValueError("Training loader is empty (StopIteration on first batch)")
-        except Exception as e:
-            logger.warning(f"Could not sample batch for validation: {e}")
+
+        # Count short sequences in sample
+        total_sequences = 0
+        short_sequences = 0
+
+        for batch in sampled_batches:
+            # Handle different batch formats (dict, tuple, etc.)
+            if isinstance(batch, dict):
+                input_ids = batch.get('input_ids', batch.get('pixel_values'))
+            elif isinstance(batch, (tuple, list)):
+                input_ids = batch[0]
+            else:
+                input_ids = batch
+
+            if input_ids is None:
+                continue
+
+            batch_size = len(input_ids)
+            total_sequences += batch_size
+
+            # Count sequences below minimum length
+            for seq in input_ids:
+                if hasattr(seq, '__len__') and len(seq) < min_seq_len:
+                    short_sequences += 1
+
+        # Validate filter rate in sampled batches
+        if total_sequences > 0:
+            filter_rate = short_sequences / total_sequences
+
+            # Strict threshold: >1% means preprocessing was likely skipped
+            if filter_rate > 0.01:
+                raise ValueError(
+                    f"❌ Data Quality Check Failed\n\n"
+                    f"Found {filter_rate:.1%} short sequences in training data "
+                    f"(< {min_seq_len} tokens for {task_type} task).\n\n"
+                    f"This indicates preprocessing was skipped or incomplete.\n\n"
+                    f"REQUIRED: Add preprocessing cell before training:\n"
+                    f"  from utils.training.data_quality import filter_short_sequences\n"
+                    f"  train_data = filter_short_sequences(train_data, min_length={min_seq_len})\n"
+                    f"  val_data = filter_short_sequences(val_data, min_length={min_seq_len})\n\n"
+                    f"See training.ipynb Cell 22 for complete example."
+                )
+
+            if filter_rate > 0:
+                logger.warning(
+                    f"Found {filter_rate:.2%} short sequences in sample. "
+                    f"Below 1% threshold but consider improving data quality."
+                )
 
         logger.info("✅ Data quality validation passed")
 
