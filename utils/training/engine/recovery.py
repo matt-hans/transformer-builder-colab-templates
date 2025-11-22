@@ -100,6 +100,11 @@ def recover_training_results(
     epoch = checkpoint.get('epoch', len(metrics_history) - 1)
     training_time = custom_state.get('training_time', 0.0)
 
+    # Extract workspace_root and run_name from checkpoint path
+    # Format: './checkpoints/run_20251122_065455_epoch0009.pt'
+    workspace_root = str(ckpt_path.parent.parent) if ckpt_path.parent.name == 'checkpoints' else str(ckpt_path.parent)
+    run_name = '_'.join(ckpt_path.stem.split('_')[:3]) if '_' in ckpt_path.stem else ckpt_path.stem
+
     # Format results exactly like Trainer._format_results() (L1090-1114)
     results = {
         'metrics_summary': metrics_df,
@@ -107,6 +112,8 @@ def recover_training_results(
         'final_loss': metrics_df['train/loss'].iloc[-1] if not metrics_df.empty else 0.0,
         'checkpoint_path': str(ckpt_path),
         'training_time': training_time,
+        'workspace_root': workspace_root,
+        'run_name': run_name,
 
         # Legacy compatibility (v3.x) - matches trainer.py L1100-1114
         'loss_history': metrics_df['train/loss'].tolist() if not metrics_df.empty else [],

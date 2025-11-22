@@ -1092,7 +1092,9 @@ class Trainer:
             'best_epoch': self.metrics_tracker.get_best_epoch('val/loss', 'min') if 'val/loss' in metrics_df.columns else 0,
             'final_loss': metrics_df['train/loss'].iloc[-1] if not metrics_df.empty else 0.0,
             'checkpoint_path': str(self.checkpoint_manager.get_best()) if self.checkpoint_manager.get_best() else None,
-            'training_time': training_time
+            'training_time': training_time,
+            'workspace_root': str(self.training_config.checkpoint_dir.parent) if self.training_config.checkpoint_dir else './checkpoints/..',
+            'run_name': self.training_config.run_name
         }
 
         # Legacy compatibility (v3.x) - DEPRECATED
