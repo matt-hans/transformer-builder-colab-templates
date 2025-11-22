@@ -36,7 +36,7 @@ def test_sequence_length_validator_passes_with_clean_dataset():
 
 
 def test_sequence_length_validator_fails_with_high_filter_rate():
-    """Test validator fails when filter rate exceeds threshold."""
+    """Test validator reports severity for high filter rate (v4.1+: permissive)."""
     # Mock dataset with 50% sequences < 2 tokens
     mock_dataset = [
         {'input_ids': [1, 2, 3]},    # Valid
@@ -48,7 +48,9 @@ def test_sequence_length_validator_fails_with_high_filter_rate():
     validator = SequenceLengthValidator(min_seq_len=2, max_filter_rate=0.20)
     result = validator.validate(mock_dataset)
 
-    assert result.passed is False
+    # v4.1+: Always passes, provides severity instead
+    assert result.passed is True
+    assert result.severity == 'very_high'  # 50% is in very_high zone (40-60%)
     assert result.metrics['filter_rate'] == 0.50
     assert "50.0%" in result.message
 
@@ -89,12 +91,14 @@ def test_sequence_length_validator_with_single_sequence():
     result = validator.validate([{'input_ids': [1, 2, 3]}])
 
     assert result.passed is True
+    assert result.severity == 'excellent'
     assert result.metrics['filter_rate'] == 0.0
 
-    # Invalid sequence
+    # Invalid sequence (v4.1+: passes but with critical severity)
     result = validator.validate([{'input_ids': [1]}])
 
-    assert result.passed is False
+    assert result.passed is True  # v4.1+: Always passes
+    assert result.severity == 'critical'  # 100% filter rate
     assert result.metrics['filter_rate'] == 1.0
 
 
@@ -147,7 +151,9 @@ def test_sequence_length_validator_with_missing_field():
     result = validator.validate(mock_dataset)
 
     # Missing field treated as empty sequence (length 0)
-    assert result.passed is False
+    # v4.1+: Always passes, critical severity for 100% filter rate
+    assert result.passed is True
+    assert result.severity == 'critical'
     assert result.metrics['filter_rate'] == 1.0
 
 
@@ -197,7 +203,7 @@ def test_sequence_length_validator_with_huggingface_dataset():
 
 
 def test_sequence_length_validator_different_thresholds():
-    """Test validator with different threshold values."""
+    """Test validator with different threshold values (v4.1+: max_filter_rate deprecated)."""
     mock_dataset = [
         {'input_ids': [1, 2]},    # Valid
         {'input_ids': []},        # Invalid (25% filter rate)
@@ -205,15 +211,18 @@ def test_sequence_length_validator_different_thresholds():
         {'input_ids': [5, 6]},    # Valid
     ]
 
-    # Strict threshold (5%)
+    # v4.1+: max_filter_rate parameter is deprecated in favor of severity zones
+    # Both validators should return passed=True with severity='high' (25% is in high zone)
     validator_strict = SequenceLengthValidator(min_seq_len=2, max_filter_rate=0.05)
     result_strict = validator_strict.validate(mock_dataset)
-    assert result_strict.passed is False
+    assert result_strict.passed is True  # v4.1+: Always passes
+    assert result_strict.severity == 'high'  # 25% is in high zone (20-40%)
 
     # Permissive threshold (30%)
     validator_permissive = SequenceLengthValidator(min_seq_len=2, max_filter_rate=0.30)
     result_permissive = validator_permissive.validate(mock_dataset)
     assert result_permissive.passed is True
+    assert result_permissive.severity == 'high'  # Same severity zone
 
 
 def test_sequence_length_validator_different_min_lengths():
@@ -256,7 +265,7 @@ def test_validation_result_passed():
 
 
 def test_validation_result_failed():
-    """Test ValidationResult for failing validation."""
+    """Test ValidationResult for failing validation (v4.1+: severity-based icons)."""
     result = ValidationResult(
         passed=False,
         message="Dataset has 30% sequences below 2 tokens",
@@ -266,7 +275,8 @@ def test_validation_result_failed():
 
     assert result.passed is False
     assert "30%" in result.message
-    assert "❌ FAIL" in str(result)
+    # v4.1+: Icon based on severity (defaults to 'normal' = ✅), not passed status
+    assert "✅ FAIL" in str(result)
 
 
 def test_validation_result_with_warnings():

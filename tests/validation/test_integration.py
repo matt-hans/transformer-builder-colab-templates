@@ -30,25 +30,26 @@ def test_wikitext_scenario():
 
     # Total: 100 sequences, 25% empty
 
-    # Validation should PASS with permissive threshold (20%)
-    # This demonstrates why we need dataset-level thresholds
+    # v4.1+: Permissive validation - always passes with severity-based warnings
     validator = SequenceLengthValidator(
         min_seq_len=TASK_MIN_SEQ_LEN['lm'],
-        max_filter_rate=0.20  # Permissive for WikiText
+        max_filter_rate=0.20  # Deprecated parameter
     )
 
-    # This should FAIL because 25% > 20%
+    # v4.1+: Should PASS with 'high' severity (25% is in high zone 20-40%)
     result = validator.validate(wikitext_dataset)
-    assert result.passed is False
+    assert result.passed is True  # v4.1+: Always passes
+    assert result.severity == 'high'  # 25% is in high zone (20-40%)
     assert result.metrics['filter_rate'] == 0.25
 
-    # But with 30% threshold, it passes
+    # Both validators should return same severity (max_filter_rate deprecated)
     validator_permissive = SequenceLengthValidator(
         min_seq_len=TASK_MIN_SEQ_LEN['lm'],
-        max_filter_rate=0.30
+        max_filter_rate=0.30  # Deprecated parameter
     )
     result_permissive = validator_permissive.validate(wikitext_dataset)
     assert result_permissive.passed is True
+    assert result_permissive.severity == 'high'  # Same severity zone
 
 
 def test_c4_scenario():
@@ -94,14 +95,15 @@ def test_corrupted_dataset_scenario():
     for i in range(40):
         corrupted_dataset.append({'input_ids': list(range(10))})
 
-    # Validation should FAIL even with permissive threshold
+    # v4.1+: Should PASS with 'critical' severity (60% is in critical zone)
     validator = SequenceLengthValidator(
         min_seq_len=TASK_MIN_SEQ_LEN['lm'],
-        max_filter_rate=0.20
+        max_filter_rate=0.20  # Deprecated parameter
     )
 
     result = validator.validate(corrupted_dataset)
-    assert result.passed is False
+    assert result.passed is True  # v4.1+: Always passes
+    assert result.severity == 'critical'  # 60% is in critical zone (60-100%)
     assert result.metrics['filter_rate'] == 0.60
     assert "60" in result.message
 
@@ -177,19 +179,20 @@ def test_validation_prevents_training_failure():
         {'input_ids': []},
     ]
 
-    # Validation catches this BEFORE training
+    # v4.1+: Validation provides critical warning BEFORE training
     validator = SequenceLengthValidator(
         min_seq_len=TASK_MIN_SEQ_LEN['lm'],
-        max_filter_rate=0.05
+        max_filter_rate=0.05  # Deprecated parameter
     )
 
     result = validator.validate(bad_dataset)
 
-    # Should FAIL with clear message
-    assert result.passed is False
+    # v4.1+: Should PASS with 'critical' severity (100% filter rate)
+    assert result.passed is True  # v4.1+: Always passes
+    assert result.severity == 'critical'  # 100% is in critical zone
     assert result.metrics['filter_rate'] == 1.0
 
-    # User sees this error IMMEDIATELY (fail-fast)
+    # User sees critical warning IMMEDIATELY (with option to abort)
     # instead of after GPU allocation + first training batch
 
 
@@ -297,16 +300,18 @@ def test_realistic_preprocessing_workflow():
     # Step 2: Validate BEFORE filtering (user sees quality report)
     validator = SequenceLengthValidator(
         min_seq_len=TASK_MIN_SEQ_LEN['lm'],
-        max_filter_rate=0.40
+        max_filter_rate=0.40  # Deprecated parameter
     )
 
     pre_filter_result = validator.validate(raw_dataset)
 
     # 3 of 6 sequences are < 2 tokens (50%)
-    assert pre_filter_result.passed is False  # Exceeds 40% threshold
+    # v4.1+: Should PASS with 'very_high' severity (50% is in very_high zone 40-60%)
+    assert pre_filter_result.passed is True  # v4.1+: Always passes
+    assert pre_filter_result.severity == 'very_high'  # 50% is in very_high zone
     assert pre_filter_result.metrics['filter_rate'] == 0.50
 
-    # Step 3: User sees error and applies filter
+    # Step 3: User sees warning and decides to apply filter
     filtered_dataset = filter_short_sequences(
         raw_dataset,
         min_length=TASK_MIN_SEQ_LEN['lm'],

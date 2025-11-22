@@ -18,10 +18,21 @@ TASK_MIN_SEQ_LEN = {
     'vision_multilabel': 0,      # Vision (no text sequences)
 }
 
-# Dataset-level validation thresholds
+# Dataset-level validation thresholds (DEPRECATED in v4.1 - use FILTER_RATE_ZONES instead)
 # These apply to the entire dataset during preprocessing, NOT individual batches
 MAX_FILTER_RATE_STRICT = 0.05       # 5% - for clean production datasets
 MAX_FILTER_RATE_PERMISSIVE = 0.20   # 20% - for datasets with known issues (WikiText has 15-25% empty lines)
+
+# Filter rate severity zones (v4.1+)
+# Permissive multi-level warning system - provides guidance without blocking training
+# Philosophy: Different datasets have different characteristics (WikiText: 25-40%, C4: 1-5%)
+FILTER_RATE_ZONES = {
+    'excellent': 0.10,    # 0-10%: ✅ No warning - excellent data quality
+    'good': 0.20,         # 10-20%: ℹ️ Info only - moderate filtering is normal
+    'high': 0.40,         # 20-40%: ⚠️ Warning - normal for structured datasets (WikiText)
+    'very_high': 0.60,    # 40-60%: 🔶 Strong warning - review recommended
+    'critical': 1.00,     # 60-100%: 🚨 Critical - possible data corruption, user confirmation required
+}
 
 # Batch-level thresholds (DEPRECATED)
 # Note: Statistically invalid for batch_size < 10 due to high variance

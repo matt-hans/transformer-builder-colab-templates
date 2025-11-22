@@ -156,34 +156,57 @@ results = trainer.train(train_data, val_data)
 
 **Three-Layer Validation Strategy** for robust training data quality:
 
-#### Layer 1: Preprocessing Validation (Fail-Fast)
+#### Layer 1: Preprocessing Validation (Permissive Warnings - v4.1+)
 **Where**: `training.ipynb` Cell 22 (before training starts)
-**Purpose**: Catch dataset quality issues before GPU allocation
+**Purpose**: Provide data quality guidance without blocking training
 **Performance**: 1× filter (runs once during preprocessing)
+**Philosophy**: Guidance, not gatekeeping - users make final decision
 
 ```python
 from utils.training.validation import SequenceLengthValidator
 from utils.training.data_quality import filter_short_sequences
 
-# Step 1: Validate dataset quality
+# Step 1: Validate dataset quality (permissive)
 validator = SequenceLengthValidator(
     min_seq_len=2,  # For causal LM
-    max_filter_rate=0.20  # Permissive for WikiText-like datasets
+    max_filter_rate=0.20  # Advisory threshold (not blocking)
 )
 
 result = validator.validate(train_data)
-if not result.passed:
-    raise ValueError(result.message)
+
+# v4.1+: Severity-based warnings (not blocking)
+if result.severity == 'excellent':
+    print(f"✅ {result.message}")
+elif result.severity == 'good':
+    print(f"ℹ️ {result.message}")
+elif result.severity == 'high':
+    print(f"⚠️ {result.message}")  # Normal for WikiText (25-40%)
+elif result.severity == 'very_high':
+    print(f"🔶 {result.message}")  # Review recommended
+else:  # critical
+    print(f"🚨 {result.message}")
+    # Only critical severity requires user confirmation
+    user_input = input("Continue? (yes/no): ")
+    if user_input.lower() != 'yes':
+        raise ValueError("Training aborted due to data quality concerns")
 
 # Step 2: Filter short sequences
 train_data = filter_short_sequences(train_data, min_length=2)
 val_data = filter_short_sequences(val_data, min_length=2)
 ```
 
+**Severity Zones (v4.1+):**
+- ✅ **Excellent** (0-10%): No warning - excellent data quality
+- ℹ️ **Good** (10-20%): Info only - moderate filtering is normal
+- ⚠️ **High** (20-40%): Warning - **NORMAL for WikiText-raw** (25-40% expected)
+- 🔶 **Very High** (40-60%): Strong warning - review recommended
+- 🚨 **Critical** (60-100%): Critical warning - user confirmation required
+
 **Key Features:**
 - Statistical sampling (1000 examples) for performance
-- Dataset-level thresholds (statistically valid)
-- Fail-fast error messages with remediation steps
+- Multi-level warnings based on severity
+- No false positives blocking valid datasets (WikiText, etc.)
+- Dataset-agnostic flexibility for diverse use cases
 - Works with HuggingFace datasets, PyTorch datasets, and lists
 
 #### Layer 2: Trainer Validation (Pre-Training)

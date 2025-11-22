@@ -69,13 +69,16 @@ class SequenceLengthValidator(DataValidator):
 
     def validate(self, dataset: Any) -> ValidationResult:
         """
-        Sample dataset and estimate filter rate.
+        Sample dataset and estimate filter rate with severity-based assessment.
+
+        v4.1+: Permissive validation - always returns passed=True, provides
+        severity-based warnings instead of blocking training.
 
         Args:
             dataset: Dataset to validate
 
         Returns:
-            ValidationResult with metrics and warnings
+            ValidationResult with metrics, severity, and warnings (always passed=True)
         """
         # Reuse existing DataQualityFilter for actual filtering logic (DRY)
         filter_fn = DataQualityFilter(self.min_seq_len, self.field_name)
@@ -109,30 +112,78 @@ class SequenceLengthValidator(DataValidator):
             'dataset_size': dataset_size,
         }
 
-        # Determine pass/fail
-        passed = filter_rate <= self.max_filter_rate
+        # Determine severity (v4.1+)
+        severity = self._get_severity(filter_rate)
 
-        # Build message
-        if not passed:
+        # Build severity-appropriate message
+        if severity == 'excellent':
+            message = f"Excellent data quality ({filter_rate:.1%} filter rate)"
+        elif severity == 'good':
+            message = f"Good data quality ({filter_rate:.1%} filter rate)"
+        elif severity == 'high':
             message = (
-                f"Dataset has {filter_rate:.1%} sequences below {self.min_seq_len} tokens "
-                f"(threshold: {self.max_filter_rate:.1%}). "
+                f"High filter rate ({filter_rate:.1%}) - normal for structured datasets like WikiText. "
                 f"Filtered {filtered_count} of {sample_size} sampled sequences."
             )
-        else:
-            message = f"Dataset validation passed ({filter_rate:.1%} filter rate)"
+        elif severity == 'very_high':
+            message = (
+                f"Very high filter rate ({filter_rate:.1%}) - review recommended. "
+                f"Filtered {filtered_count} of {sample_size} sampled sequences."
+            )
+        else:  # critical
+            message = (
+                f"Critical filter rate ({filter_rate:.1%}) - possible data corruption. "
+                f"Filtered {filtered_count} of {sample_size} sampled sequences."
+            )
 
-        # Add warnings for moderate filter rates (10-20% is normal for WikiText)
+        # Add context-appropriate warnings
         warnings = []
-        if 0.10 < filter_rate <= self.max_filter_rate:
+        if severity == 'good':
             warnings.append(
-                f"Moderate filter rate ({filter_rate:.1%}). "
-                f"This is normal for datasets like WikiText with empty lines."
+                "Moderate filtering is normal for some datasets (e.g., WikiText has empty lines)."
+            )
+        elif severity == 'high':
+            warnings.append(
+                "This is EXPECTED for WikiText-raw and similar datasets with structural empty lines."
+            )
+        elif severity == 'very_high':
+            warnings.append(
+                "Review your dataset source and tokenization settings if this seems incorrect."
+            )
+        elif severity == 'critical':
+            warnings.append(
+                "CRITICAL: This suggests data corruption or incorrect dataset. Verify your data source!"
             )
 
         return ValidationResult(
-            passed=passed,
+            passed=True,  # v4.1+: Always pass (permissive validation)
             message=message,
             metrics=metrics,
-            warnings=warnings
+            warnings=warnings,
+            severity=severity
         )
+
+    def _get_severity(self, filter_rate: float) -> str:
+        """
+        Determine severity level based on filter rate.
+
+        v4.1+: Uses FILTER_RATE_ZONES for multi-level warning system.
+
+        Args:
+            filter_rate: Fraction of sequences filtered (0.0-1.0)
+
+        Returns:
+            Severity level: 'excellent', 'good', 'high', 'very_high', or 'critical'
+        """
+        from utils.training.constants import FILTER_RATE_ZONES
+
+        if filter_rate < FILTER_RATE_ZONES['excellent']:
+            return 'excellent'
+        elif filter_rate < FILTER_RATE_ZONES['good']:
+            return 'good'
+        elif filter_rate < FILTER_RATE_ZONES['high']:
+            return 'high'
+        elif filter_rate < FILTER_RATE_ZONES['very_high']:
+            return 'very_high'
+        else:
+            return 'critical'
