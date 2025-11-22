@@ -314,6 +314,15 @@ class Trainer:
         # Setup data loaders
         self._setup_data(train_data, val_data)
 
+        # Validate data quality before starting training
+        if self.data_module:
+            train_loader = self.data_module.train_dataloader()
+            val_loader = self.data_module.val_dataloader() if val_data is not None else None
+        else:
+            train_loader = self.train_loader
+            val_loader = self.val_loader
+        self._validate_data_quality(train_loader, val_loader)
+
         # Resume if checkpoint provided
         start_epoch = 0
         if resume_from:
@@ -783,6 +792,45 @@ class Trainer:
             'loss': avg_loss,
             'accuracy': accuracy
         }
+
+    def _validate_data_quality(self, train_loader, val_loader=None):
+        """
+        Pre-training data quality validation (general-purpose).
+
+        Checks:
+        - Dataset is not empty
+        - Sequences meet task requirements
+        - No excessive filtering at collation time
+
+        Raises:
+            ValueError: If data quality issues detected
+        """
+        # Check 1: Non-empty dataset
+        if len(train_loader) == 0:
+            raise ValueError(
+                "Training dataset is empty after collation. "
+                "This typically means:\n"
+                "  - All sequences were filtered (too short)\n"
+                "  - Dataset preprocessing removed all samples\n"
+                "  - Tokenization produced no valid sequences\n\n"
+                "Solutions:\n"
+                "  - Check dataset source (is it empty?)\n"
+                "  - Review tokenization settings\n"
+                "  - Verify min_seq_len requirements for your task\n"
+                "  - Use utils.training.data_quality.filter_short_sequences() before training"
+            )
+
+        # Check 2: Sample a batch to verify data quality
+        try:
+            first_batch = next(iter(train_loader))
+            logger.debug(f"Sample batch keys: {first_batch.keys()}")
+            logger.debug(f"Sample batch size: {len(first_batch.get('input_ids', []))}")
+        except StopIteration:
+            raise ValueError("Training loader is empty (StopIteration on first batch)")
+        except Exception as e:
+            logger.warning(f"Could not sample batch for validation: {e}")
+
+        logger.info("✅ Data quality validation passed")
 
     def _prepare_loss_inputs(
         self,

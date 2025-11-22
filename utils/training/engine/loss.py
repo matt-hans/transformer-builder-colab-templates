@@ -510,6 +510,7 @@ class LossStrategyRegistry:
 # Register built-in strategies
 LossStrategyRegistry.register("language_modeling")(LanguageModelingLoss)
 LossStrategyRegistry.register("causal_lm")(LanguageModelingLoss)  # Alias
+LossStrategyRegistry.register("lm")(LanguageModelingLoss)  # Add "lm" mapping
 LossStrategyRegistry.register("classification")(ClassificationLoss)
 LossStrategyRegistry.register("vision_classification")(VisionLoss)
 LossStrategyRegistry.register("segmentation")(VisionLoss)

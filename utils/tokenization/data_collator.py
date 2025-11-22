@@ -33,18 +33,30 @@ class LanguageModelingDataCollator:
         self.padding_side = padding_side
         self.task_spec = task_spec
 
-        # Determine minimum sequence length based on task type (for general-purpose platform)
+        # Map task types to minimum sequence lengths (dataset-agnostic)
+        TASK_MIN_SEQ_LEN = {
+            'lm': 2,                    # Causal LM (token shifting)
+            'causal_lm': 2,             # Alias for causal LM
+            'language_modeling': 2,      # Legacy alias
+            'seq2seq': 2,               # Encoder-decoder (also needs shifting)
+            'classification': 1,         # Classification (single token OK)
+            'text_classification': 1,    # Alias
+            'vision_classification': 0,  # Vision (no text sequences)
+            'vision_multilabel': 0,      # Vision (no text sequences)
+        }
+
         if task_spec:
             task_type = getattr(task_spec, 'task_type', 'unknown')
-            if task_type in ['language_modeling', 'causal_lm']:
-                self.min_seq_len = 2  # Causal LM requires >= 2 tokens for token shifting
-            elif task_type == 'classification':
-                self.min_seq_len = 1  # Classification can work with single tokens
-            else:
-                self.min_seq_len = 1  # Conservative default for unknown tasks
-                logger.debug(f"Unknown task type '{task_type}', using min_seq_len=1")
+            # Look up minimum sequence length for this task
+            self.min_seq_len = TASK_MIN_SEQ_LEN.get(task_type, 1)  # Default to 1 if unknown
+
+            if task_type not in TASK_MIN_SEQ_LEN:
+                logger.warning(
+                    f"Unknown task type '{task_type}'. Using conservative min_seq_len=1. "
+                    f"Supported tasks: {list(TASK_MIN_SEQ_LEN.keys())}"
+                )
         else:
-            self.min_seq_len = 1  # No task_spec provided, be permissive
+            self.min_seq_len = 1  # No task_spec, be permissive
             logger.debug("No task_spec provided to collator, using min_seq_len=1")
 
     def _safe_copy(self, data: Any) -> Any:
