@@ -629,13 +629,22 @@ class Trainer:
             loss_inputs = self._prepare_loss_inputs(batch, model_output)
             loss = self.loss_strategy.compute_loss(loss_inputs)
 
-            # Debug: Check for nan loss and log details
+            # Debug: Check for nan loss and log details (with safe tensor inspection)
             if torch.isnan(loss):
-                logger.error(
-                    f"NAN loss detected at batch {batch_idx}! "
-                    f"logits range: [{loss_inputs['logits'].min():.2f}, {loss_inputs['logits'].max():.2f}], "
-                    f"labels: {loss_inputs['labels'][:5]}"  # First 5 labels for debugging
-                )
+                try:
+                    logits_info = self._safe_tensor_inspect(loss_inputs['logits'], 'logits')
+                    labels_info = self._safe_tensor_inspect(loss_inputs['labels'], 'labels')
+                    logger.error(
+                        f"NAN loss detected at batch {batch_idx}!\n"
+                        f"  {logits_info}\n"
+                        f"  {labels_info}"
+                    )
+                except Exception as e:
+                    # Ultimate safety: even diagnostic failures shouldn't crash training
+                    logger.error(
+                        f"NAN loss detected at batch {batch_idx} "
+                        f"(diagnostic inspection failed: {e.__class__.__name__})"
+                    )
 
             # Gradient accumulation handles: scaling, backward, clipping, optimizer step
             is_final_batch = (batch_idx == len(train_loader) - 1)
@@ -771,6 +780,54 @@ class Trainer:
             loss_inputs['pad_token_id'] = self.config.pad_token_id
 
         return loss_inputs
+
+    def _safe_tensor_inspect(self, tensor: torch.Tensor, name: str = "tensor") -> str:
+        """
+        Safely inspect tensor for diagnostic logging without crashing.
+
+        Handles edge cases:
+        - Empty tensors (numel() == 0)
+        - Scalar tensors
+        - Tensors with nan/inf values
+
+        Args:
+            tensor: Tensor to inspect
+            name: Name for display
+
+        Returns:
+            Human-readable summary string (never raises exceptions)
+        """
+        try:
+            # Basic info (always safe)
+            info = f"{name}: shape={tuple(tensor.shape)}, dtype={tensor.dtype}"
+
+            # Handle empty tensors
+            if tensor.numel() == 0:
+                return f"{info} [EMPTY - possibly all-padding batch or seq_len=1 after shift]"
+
+            # Handle scalar tensors
+            if tensor.ndim == 0:
+                return f"{info}, value={tensor.item():.4f}"
+
+            # Compute safe statistics
+            with torch.no_grad():
+                min_val = tensor.min().item()
+                max_val = tensor.max().item()
+                has_nan = torch.isnan(tensor).any().item()
+                has_inf = torch.isinf(tensor).any().item()
+
+                info += f", range=[{min_val:.2f}, {max_val:.2f}]"
+
+                if has_nan:
+                    info += ", contains NaN"
+                if has_inf:
+                    info += ", contains Inf"
+
+            return info
+
+        except Exception as e:
+            # Ultimate fallback
+            return f"{name}: <inspection failed: {e.__class__.__name__}>"
 
     def _log_epoch_metrics(
         self,

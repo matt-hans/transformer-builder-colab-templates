@@ -188,6 +188,18 @@ class LanguageModelingLoss:
                 f"got shape {labels.shape}"
             )
 
+        # Validate minimum sequence length for causal LM
+        seq_len = logits.size(1)
+        if seq_len < 2:
+            raise ValueError(
+                f"Causal language modeling requires seq_len >= 2 for token shifting, "
+                f"got seq_len={seq_len}. This typically happens with:\n"
+                f"  - All-padding batches (no actual tokens)\n"
+                f"  - Single-token sequences after tokenization\n"
+                f"  - Data preprocessing issues\n"
+                f"Fix: Ensure data collator filters sequences with min_length >= 2"
+            )
+
         # Shift tokens for causal LM: predict next token
         # Input: [batch, seq_len, vocab] -> [batch, seq_len-1, vocab]
         # Labels: [batch, seq_len] -> [batch, seq_len-1]
