@@ -149,6 +149,25 @@ def test_export_workflow_resilience():
 
     print("✅ Export workflow: Resilient to missing variables")
 
+def test_cell_33_provides_export_attributes():
+    """Verify Cell 33 SimpleNamespace has export_bundle and export_formats for Cell 45."""
+    with open(NOTEBOOK_PATH, 'r') as f:
+        nb = json.load(f)
+
+    cell_33_source = ''.join(nb['cells'][33]['source'])
+
+    # Check for export_bundle attribute
+    assert "export_bundle" in cell_33_source, "Cell 33 doesn't set export_bundle attribute"
+    assert "export_bundle=False" in cell_33_source, "Cell 33 export_bundle should default to False"
+
+    # Check for export_formats attribute
+    assert "export_formats" in cell_33_source, "Cell 33 doesn't set export_formats attribute"
+
+    # Verify it's in SimpleNamespace context
+    assert "SimpleNamespace" in cell_33_source, "Cell 33 should use SimpleNamespace"
+
+    print("✅ Cell 33: Provides export_bundle and export_formats attributes")
+
 if __name__ == "__main__":
     print("=" * 70)
     print("EXPORT CELLS INTEGRATION TESTS")
@@ -173,6 +192,10 @@ if __name__ == "__main__":
 
     # Workflow tests
     test_export_workflow_resilience()
+    print()
+
+    # Cell 33 tests (production export support)
+    test_cell_33_provides_export_attributes()
     print()
 
     print("=" * 70)

@@ -371,6 +371,10 @@ print(f"Val Loss: {results['val_loss_history'][-1]:.4f}")
 - Recovers best checkpoint automatically
 - Logs to ExperimentDB
 - Provides results in same format as `Trainer.train()`
+- Creates minimal `training_config` SimpleNamespace for downstream cells:
+  - Attributes: `run_name`, `checkpoint_dir`, `epochs`, `export_bundle`, `export_formats`
+  - `export_bundle=False` by default (production export skipped in recovery workflow)
+  - Enables Cells 43-45 (export cells) to function in recovery workflow
 
 **Load Model Weights Cell** (training.ipynb Cell 34):
 - Loads `model_state_dict` from checkpoint into model
