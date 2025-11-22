@@ -1067,9 +1067,26 @@ class Trainer:
 
         Returns:
             Dictionary with results summary
+
+        Return Schema (v4.0):
+            {
+                'metrics_summary': pd.DataFrame,  # Per-epoch metrics (train/loss, val/loss, etc.)
+                'best_epoch': int,                 # Epoch with best validation performance
+                'final_loss': float,               # Final training loss
+                'checkpoint_path': str | None,     # Path to best checkpoint
+                'training_time': float,            # Total training time (seconds)
+                'loss_history': List[float],       # DEPRECATED: Use metrics_summary['train/loss']
+                'val_loss_history': List[float]    # DEPRECATED: Use metrics_summary['val/loss']
+            }
+
+        Notes:
+            - 'loss_history' and 'val_loss_history' are provided for backward compatibility
+              with v3.x notebooks but will be removed in v5.0.
+            - Use 'metrics_summary' DataFrame for comprehensive metrics access.
         """
         metrics_df = self.metrics_tracker.get_summary()
 
+        # Modern API (v4.0+)
         results = {
             'metrics_summary': metrics_df,
             'best_epoch': self.metrics_tracker.get_best_epoch('val/loss', 'min') if 'val/loss' in metrics_df.columns else 0,
@@ -1077,6 +1094,24 @@ class Trainer:
             'checkpoint_path': str(self.checkpoint_manager.get_best()) if self.checkpoint_manager.get_best() else None,
             'training_time': training_time
         }
+
+        # Legacy compatibility (v3.x) - DEPRECATED
+        # Derive loss_history from metrics_summary for backward compatibility
+        if not metrics_df.empty:
+            results['loss_history'] = metrics_df['train/loss'].tolist()
+            results['val_loss_history'] = metrics_df['val/loss'].tolist() if 'val/loss' in metrics_df.columns else []
+
+            # Log deprecation warning (only once, not per epoch)
+            logger.warning(
+                "DEPRECATION WARNING: 'loss_history' and 'val_loss_history' fields are deprecated in v4.0. "
+                "Use 'metrics_summary' DataFrame instead for full metrics access. "
+                "Legacy fields will be removed in v5.0. "
+                "See MLOPS_FAILURE_ANALYSIS.md for migration guide."
+            )
+        else:
+            # Empty training (edge case: 0 epochs or all epochs failed)
+            results['loss_history'] = []
+            results['val_loss_history'] = []
 
         logger.info(f"Training complete in {training_time:.1f}s")
         logger.info(f"Best model at epoch {results['best_epoch']}")
