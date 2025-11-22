@@ -390,6 +390,13 @@ print(f"Val Loss: {results['val_loss_history'][-1]:.4f}")
 - Works for both training (Cell 32) and recovery (Cell 33) workflows
 - Always prints extraction status for verification
 
+**Display Metrics Table Cell** (training.ipynb Cell 40):
+- Displays training metrics summary table
+- Exports metrics to CSV: `{workspace_root}/results/{run_name}_metrics.csv`
+- Requires `metrics_df` from Cell 32 (Training) or Cell 33 (Recovery)
+- Provides fallback values: `run_name='training_run'`, `workspace_root='./workspace'`
+- Graceful error handling for missing variables or export failures
+
 **What's Saved in Checkpoints** (automatic):
 - Full metrics history (`metrics_tracker.metrics_history`)
 - Model state dict
