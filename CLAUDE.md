@@ -387,6 +387,9 @@ print(f"Val Loss: {results['val_loss_history'][-1]:.4f}")
 
 **Variable Extraction Cell** (training.ipynb Cell 35):
 - Extracts `workspace_root`, `run_name`, `metrics_df` from results dict
+- **Resolves `config_path`** for export cells using glob search (v4.1+)
+- Searches `{workspace_root}/configs/config_{run_name}_*.json` (most recent by mtime)
+- Sets `config_path = None` if not found (export cells skip config gracefully)
 - Works for both training (Cell 32) and recovery (Cell 33) workflows
 - Always prints extraction status for verification
 
@@ -396,6 +399,17 @@ print(f"Val Loss: {results['val_loss_history'][-1]:.4f}")
 - Requires `metrics_df` from Cell 32 (Training) or Cell 33 (Recovery)
 - Provides fallback values: `run_name='training_run'`, `workspace_root='./workspace'`
 - Graceful error handling for missing variables or export failures
+
+**Export Summary Cell** (training.ipynb Cell 43):
+- Displays comprehensive export summary (workspace, results, checkpoints)
+- Gracefully handles missing `config_path` → shows "(not found)" instead of error
+- Lists all checkpoints in workspace with file sizes
+
+**Download Results Cell** (training.ipynb Cell 44):
+- Downloads results to local machine (dashboard, metrics CSV, config, checkpoint)
+- Uses `run_name` variable (not `config.run_name`) for file paths
+- Gracefully handles missing `config_path` and `best_checkpoint_path`
+- All downloads are conditional on file existence
 
 **What's Saved in Checkpoints** (automatic):
 - Full metrics history (`metrics_tracker.metrics_history`)
