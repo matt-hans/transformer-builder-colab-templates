@@ -344,6 +344,83 @@ config = TrainingConfig(gradient_clip_norm=1.0)
 
 **Padding Handling**: Automatic `ignore_index=pad_token_id` in loss calculation
 
+#### Checkpoint Recovery (v4.0+)
+
+**NEW**: Recover training results from saved checkpoints for interrupted training, analysis, or resume workflows.
+
+**Quick Example** (in training.ipynb):
+```python
+from utils.training.engine.recovery import recover_training_results
+
+# Recover from best checkpoint
+results = recover_training_results(checkpoint_dir='./checkpoints')
+
+# Use exactly like Trainer.train() return value
+print(f"Train Loss: {results['loss_history'][-1]:.4f}")
+print(f"Val Loss: {results['val_loss_history'][-1]:.4f}")
+```
+
+**Use Cases**:
+1. **Interrupted Training**: Runtime disconnected? Recover your 3-hour training run
+2. **Analysis**: Examine training history without re-running training
+3. **Resume Training**: Load checkpoint and continue from any epoch
+4. **Comparison**: Load multiple checkpoints to compare experiments
+
+**Recovery Cell** (training.ipynb Cell 33):
+- Lists all checkpoints with metrics
+- Recovers best checkpoint automatically
+- Logs to ExperimentDB
+- Provides results in same format as `Trainer.train()`
+
+**What's Saved in Checkpoints** (automatic):
+- Full metrics history (`metrics_tracker.metrics_history`)
+- Model state dict
+- Optimizer & scheduler states
+- RNG states (reproducibility)
+- Training configuration
+- Git commit hash
+
+**API Reference**:
+```python
+# Recover from specific checkpoint
+results = recover_training_results(
+    checkpoint_path='checkpoint_epoch0009_step000009_20251122_065455.pt'
+)
+
+# Recover best checkpoint in directory
+results = recover_training_results(
+    checkpoint_dir='./checkpoints',
+    monitor='val_loss',
+    mode='min'
+)
+
+# List all checkpoints
+from utils.training.engine.recovery import list_checkpoints
+checkpoints = list_checkpoints('./checkpoints')
+for ckpt in checkpoints:
+    print(f"Epoch {ckpt['epoch']}: val_loss={ckpt['val_loss']:.4f}")
+```
+
+**Return Format** (backward-compatible):
+```python
+{
+    'metrics_summary': pd.DataFrame,  # Modern API: per-epoch metrics
+    'best_epoch': int,
+    'final_loss': float,
+    'checkpoint_path': str,
+    'training_time': float,
+    'loss_history': List[float],      # v3.x compatibility
+    'val_loss_history': List[float]   # v3.x compatibility
+}
+```
+
+**Error Handling**:
+- Missing checkpoint → Clear FileNotFoundError with path
+- No metrics_history → Explains v4.0 requirement
+- Corrupted file → Suggests recovery from earlier checkpoint
+
+**See Also**: `tests/training/engine/test_recovery.py` for comprehensive test examples
+
 ## Architecture & Code Organization
 
 ### Three-Tier Testing Architecture
