@@ -374,6 +374,8 @@ print(f"Val Loss: {results['val_loss_history'][-1]:.4f}")
 
 **Load Model Weights Cell** (training.ipynb Cell 34):
 - Loads `model_state_dict` from checkpoint into model
+- **Intelligent checkpoint discovery**: reuses `ckpt_dir` from Cell 33, or searches common locations
+- Checkpoint search paths: `./checkpoints`, `./training_output/checkpoints`, `./tmp_training_output/checkpoints`, `/content/workspace/checkpoints`
 - Displays available checkpoints with metrics
 - Defaults to Cell 33's checkpoint selection if available
 - Auto-selects best checkpoint by val_loss otherwise
@@ -381,6 +383,7 @@ print(f"Val Loss: {results['val_loss_history'][-1]:.4f}")
 - Sets model to eval() mode (ready for inference)
 - Shows comprehensive info (checkpoint metadata, model summary, architecture preview)
 - Provides error handling for architecture mismatches
+- Lists searched locations in error message for debugging
 
 **Variable Extraction Cell** (training.ipynb Cell 35):
 - Extracts `workspace_root`, `run_name`, `metrics_df` from results dict

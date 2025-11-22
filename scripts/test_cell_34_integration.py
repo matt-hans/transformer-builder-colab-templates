@@ -43,6 +43,11 @@ def test_cell_content():
         "ARCHITECTURE PREVIEW",
         "NEXT STEPS",
         "RuntimeError",
+        # New: intelligent checkpoint discovery
+        "import os",
+        "if 'ckpt_dir' in globals()",
+        "checkpoint_search_paths",
+        "os.path.exists",
     ]
 
     for keyword in required:
