@@ -33,32 +33,6 @@ class LanguageModelingDataCollator:
         self.padding_side = padding_side
         self.task_spec = task_spec
 
-        # Map task types to minimum sequence lengths (dataset-agnostic)
-        TASK_MIN_SEQ_LEN = {
-            'lm': 2,                    # Causal LM (token shifting)
-            'causal_lm': 2,             # Alias for causal LM
-            'language_modeling': 2,      # Legacy alias
-            'seq2seq': 2,               # Encoder-decoder (also needs shifting)
-            'classification': 1,         # Classification (single token OK)
-            'text_classification': 1,    # Alias
-            'vision_classification': 0,  # Vision (no text sequences)
-            'vision_multilabel': 0,      # Vision (no text sequences)
-        }
-
-        if task_spec:
-            task_type = getattr(task_spec, 'task_type', 'unknown')
-            # Look up minimum sequence length for this task
-            self.min_seq_len = TASK_MIN_SEQ_LEN.get(task_type, 1)  # Default to 1 if unknown
-
-            if task_type not in TASK_MIN_SEQ_LEN:
-                logger.warning(
-                    f"Unknown task type '{task_type}'. Using conservative min_seq_len=1. "
-                    f"Supported tasks: {list(TASK_MIN_SEQ_LEN.keys())}"
-                )
-        else:
-            self.min_seq_len = 1  # No task_spec, be permissive
-            logger.debug("No task_spec provided to collator, using min_seq_len=1")
-
     def _safe_copy(self, data: Any) -> Any:
         """
         Copy data safely, handling both tensors and lists/numpy arrays.
@@ -125,48 +99,39 @@ class LanguageModelingDataCollator:
         return result
 
     def __call__(self, examples: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # LAYER 2: Task-aware sequence length filtering
-        # Filter out sequences that are too short for the current task
-        valid_examples = [
-            ex for ex in examples
-            if len(ex.get('input_ids', [])) >= self.min_seq_len
-        ]
-
-        filtered_count = len(examples) - len(valid_examples)
-
-        # Calculate filter rate
-        filter_rate = filtered_count / len(examples) if examples else 0
-
-        # TRANSPARENCY: Always log when filtering occurs
-        if filtered_count > 0:
-            task_name = self.task_spec.task_type if self.task_spec else "unknown"
-            logger.warning(
-                f"📊 Data Quality Alert: Filtered {filtered_count}/{len(examples)} sequences "
-                f"(< {self.min_seq_len} tokens for {task_name} task). "
-                f"Filter rate: {filter_rate:.1%}. "
-                f"Consider cleaning your dataset to remove empty/short samples."
-            )
-
-        # FAIL-FAST: If >10% of sequences filtered, likely systemic data quality issue
-        if filter_rate > 0.10:
-            task_name = self.task_spec.task_type if self.task_spec else "unknown"
+        # LAYER 3: Minimal safety check - empty batch only
+        # Preprocessing (Layer 1) and Trainer validation (Layer 2) should prevent this
+        if len(examples) == 0:
             raise ValueError(
-                f"❌ Data Quality Error: {filter_rate:.1%} of sequences are too short "
-                f"(< {self.min_seq_len} tokens for {task_name} task).\n\n"
-                f"This indicates a systemic data quality issue. "
-                f"Filtered {filtered_count} of {len(examples)} sequences in this batch.\n\n"
-                f"Solutions:\n"
-                f"  1. Filter dataset before training:\n"
-                f"     dataset = dataset.filter(lambda x: len(x['input_ids']) >= {self.min_seq_len})\n"
-                f"  2. Check tokenization: Ensure text samples aren't empty or whitespace-only\n"
-                f"  3. Review preprocessing: Remove invalid samples upstream\n\n"
-                f"For causal language modeling, sequences must have at least 2 tokens for token shifting.\n"
-                f"For classification, single-token sequences may be acceptable."
+                "Empty batch received. This should not happen if preprocessing validation "
+                "was performed correctly. Ensure you ran filter_short_sequences() before training."
             )
 
-        # Continue with filtered examples
-        examples = valid_examples
+        # Create padded batch
+        batch = self._create_batch(examples)
 
+        # Apply task objective (causal LM or masked LM)
+        batch = self._apply_objective(batch)
+
+        # Convert BatchEncoding to plain dict (HuggingFace #23138 workaround)
+        # tokenizer.pad() returns BatchEncoding which breaks ** unpacking in trainer
+        batch = dict(batch)
+
+        # Convert lists to tensors (required for loss computation)
+        # tokenizer.pad() with return_tensors=None returns lists, but trainer expects tensors
+        batch = self._ensure_tensors(batch)
+
+        return batch
+
+    def _create_batch(self, examples: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Create padded batch with attention masks.
+
+        Args:
+            examples: List of tokenized examples
+
+        Returns:
+            Dict with padded input_ids and attention_mask
+        """
         # Use tokenizer.pad when available
         batch = None
         if hasattr(self.tokenizer, 'pad'):
@@ -190,6 +155,17 @@ class LanguageModelingDataCollator:
         if 'attention_mask' not in batch:
             batch['attention_mask'] = self._build_attention_mask(batch['input_ids'])
 
+        return batch
+
+    def _apply_objective(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply task objective (causal LM or masked LM).
+
+        Args:
+            batch: Padded batch from _create_batch()
+
+        Returns:
+            Batch with labels added based on objective
+        """
         if not self.mlm:
             # labels same as input_ids for causal LM
             # (model performs shifting internally)
@@ -199,14 +175,6 @@ class LanguageModelingDataCollator:
             labels, masked_inputs = self._mask_tokens(input_ids)
             batch['labels'] = labels
             batch['input_ids'] = masked_inputs
-
-        # Convert BatchEncoding to plain dict (HuggingFace #23138 workaround)
-        # tokenizer.pad() returns BatchEncoding which breaks ** unpacking in trainer
-        batch = dict(batch)
-
-        # Convert lists to tensors (required for loss computation)
-        # tokenizer.pad() with return_tensors=None returns lists, but trainer expects tensors
-        batch = self._ensure_tensors(batch)
 
         return batch
 
