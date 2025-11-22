@@ -379,6 +379,7 @@ print(f"Val Loss: {results['val_loss_history'][-1]:.4f}")
 - RNG states (reproducibility)
 - Training configuration
 - Git commit hash
+- **Session metadata** (v4.0+): `workspace_root`, `run_name` for reliable recovery
 
 **API Reference**:
 ```python
@@ -409,10 +410,28 @@ for ckpt in checkpoints:
     'final_loss': float,
     'checkpoint_path': str,
     'training_time': float,
+    'workspace_root': str,            # v4.0+: Base directory for results/checkpoints
+    'run_name': str,                  # v4.0+: Unique run identifier
     'loss_history': List[float],      # v3.x compatibility
     'val_loss_history': List[float]   # v3.x compatibility
 }
 ```
+
+**Checkpoint Schema v4.0**:
+
+Starting with v4.0, checkpoints store **session metadata** for reliable recovery:
+- `workspace_root`: Base directory for results/exports (extracted from checkpoint, not inferred from filesystem)
+- `run_name`: Unique run identifier (extracted from checkpoint, not parsed from filename)
+
+**Recovery Workflow**:
+1. Load checkpoint → extract `metrics_history` + `workspace_root` + `run_name` from `custom_state`
+2. Compute derived fields → `loss_history`, `best_epoch`
+3. Return `results` dict → ready for downstream notebook cells
+
+**Legacy Checkpoint Support**:
+- v3.x checkpoints (without session metadata) are still supported
+- Recovery falls back to path parsing with a warning message
+- Ensures backward compatibility while encouraging v4.0+ format
 
 **Error Handling**:
 - Missing checkpoint → Clear FileNotFoundError with path

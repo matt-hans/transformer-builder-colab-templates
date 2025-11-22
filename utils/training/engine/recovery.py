@@ -100,10 +100,17 @@ def recover_training_results(
     epoch = checkpoint.get('epoch', len(metrics_history) - 1)
     training_time = custom_state.get('training_time', 0.0)
 
-    # Extract workspace_root and run_name from checkpoint path
-    # Format: './checkpoints/run_20251122_065455_epoch0009.pt'
-    workspace_root = str(ckpt_path.parent.parent) if ckpt_path.parent.name == 'checkpoints' else str(ckpt_path.parent)
-    run_name = '_'.join(ckpt_path.stem.split('_')[:3]) if '_' in ckpt_path.stem else ckpt_path.stem
+    # Extract workspace_root and run_name from checkpoint (v4.0+)
+    # Fallback to path parsing for legacy checkpoints (v3.x)
+    if 'workspace_root' in custom_state:
+        workspace_root = custom_state['workspace_root']
+        run_name = custom_state.get('run_name', 'recovered_run')
+        print(f"✅ Session metadata loaded from checkpoint (v4.0+)")
+    else:
+        # Legacy checkpoint (v3.x) - infer from path
+        workspace_root = str(ckpt_path.parent.parent) if ckpt_path.parent.name == 'checkpoints' else str(ckpt_path.parent)
+        run_name = '_'.join(ckpt_path.stem.split('_')[:3]) if '_' in ckpt_path.stem else ckpt_path.stem
+        print(f"⚠️  Legacy checkpoint detected (v3.x) - workspace_root/run_name inferred from path")
 
     # Format results exactly like Trainer._format_results() (L1090-1114)
     results = {

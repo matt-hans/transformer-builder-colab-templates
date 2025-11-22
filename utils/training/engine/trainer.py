@@ -1027,7 +1027,10 @@ class Trainer:
             metrics=checkpoint_metrics,
             custom_state={
                 'training_config': self.training_config.to_dict(),
-                'metrics_history': self.metrics_tracker.metrics_history
+                'metrics_history': self.metrics_tracker.metrics_history,
+                # Session metadata for reliable recovery (v4.0+)
+                'workspace_root': str(self.training_config.checkpoint_dir.parent) if self.training_config.checkpoint_dir else './workspace',
+                'run_name': self.training_config.run_name,
             }
         )
 

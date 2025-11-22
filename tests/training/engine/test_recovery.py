@@ -318,3 +318,61 @@ def test_recovery_requires_v4_checkpoint(mock_checkpoint_without_metrics):
 
     with pytest.raises(ValueError, match="before v4.0 or training failed"):
         recover_training_results(checkpoint_path=str(ckpt_path))
+
+
+def test_recover_with_session_metadata_v4(tmp_path):
+    """Test that recovery extracts workspace_root and run_name from v4.0+ checkpoint."""
+    metrics_history = [
+        {'epoch': 0, 'train/loss': 4.5, 'val/loss': 4.2},
+        {'epoch': 1, 'train/loss': 3.8, 'val/loss': 3.9},
+    ]
+
+    checkpoint = {
+        'epoch': 1,
+        'model_state_dict': {},
+        'custom_state': {
+            'metrics_history': metrics_history,
+            'workspace_root': '/content/workspace',
+            'run_name': 'run_20251122_065455',
+        }
+    }
+
+    ckpt_path = tmp_path / 'checkpoint_epoch0001.pt'
+    torch.save(checkpoint, ckpt_path)
+
+    results = recover_training_results(checkpoint_path=str(ckpt_path))
+
+    # Verify session metadata extracted from checkpoint
+    assert results['workspace_root'] == '/content/workspace'
+    assert results['run_name'] == 'run_20251122_065455'
+    assert results['best_epoch'] == 1
+    assert len(results['loss_history']) == 2
+
+
+def test_recover_legacy_checkpoint_fallback(tmp_path):
+    """Test that recovery falls back to path parsing for v3.x checkpoints."""
+    metrics_history = [
+        {'epoch': 0, 'train/loss': 4.5, 'val/loss': 4.2},
+    ]
+
+    # v3.x checkpoint without session metadata
+    checkpoint = {
+        'epoch': 0,
+        'model_state_dict': {},
+        'custom_state': {
+            'metrics_history': metrics_history,
+            # No workspace_root or run_name
+        }
+    }
+
+    # Create checkpoint in checkpoints subdirectory
+    checkpoints_dir = tmp_path / 'checkpoints'
+    checkpoints_dir.mkdir()
+    ckpt_path = checkpoints_dir / 'checkpoint_run_20251122_epoch0000.pt'
+    torch.save(checkpoint, ckpt_path)
+
+    results = recover_training_results(checkpoint_path=str(ckpt_path))
+
+    # Should fallback to path parsing
+    assert results['workspace_root'] == str(tmp_path)  # parent.parent
+    assert 'checkpoint' in results['run_name']  # Parsed from filename
