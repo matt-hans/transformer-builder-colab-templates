@@ -615,6 +615,91 @@ coordinator = TrainingCoordinator(
 
 **Migration Path**: v5.0 may deprecate `TrainingCoordinator` in favor of unified `Trainer` API.
 
+### Import Validation Architecture (training.ipynb Cell 8)
+
+**Critical Design Pattern**: Cell 8 (Import Infrastructure) validates ALL imported functions to prevent silent import failures.
+
+**Problem This Solves**:
+- Import statements inside try/except blocks can fail silently
+- Users see "✅ Training infrastructure loaded" even if critical functions failed to import
+- Later cells fail with confusing `NameError` when trying to use the missing function
+- Root cause (import failure) is disconnected from symptom (NameError in usage cell)
+
+**Solution - Fail-Fast Validation**:
+
+Cell 8 uses a `required_classes` dictionary to validate all imports:
+
+```python
+# Cell 8 validation pattern
+try:
+    # Import functions
+    from utils.training.export_utilities import create_export_bundle
+    from utils.training.drift_metrics import compute_dataset_profile, compare_profiles
+
+    # VALIDATE: All required components are imported
+    required_classes = {
+        # Classes (14 total)
+        'Trainer': Trainer,
+        'TrainingLoop': TrainingLoop,
+        # ... (other classes)
+
+        # Functions (3 total) - CRITICAL: prevents silent failures
+        'create_export_bundle': create_export_bundle,
+        'compute_dataset_profile': compute_dataset_profile,
+        'compare_profiles': compare_profiles,
+    }
+
+    missing = [name for name, cls in required_classes.items() if cls is None]
+    if missing:
+        raise ImportError(f"❌ Missing required classes: {', '.join(missing)}")
+
+    print("✅ Training infrastructure loaded")
+    print(f"   Validated: {len(required_classes)} components imported successfully")
+
+except ImportError as e:
+    print("❌ Failed to import training infrastructure!")
+    raise
+```
+
+**Total Components Validated**: 17
+- 14 classes (Trainer, TrainingLoop, etc.)
+- 3 functions (create_export_bundle, compute_dataset_profile, compare_profiles)
+
+**Why Functions Need Validation**:
+- Cell 46 (Production Export Bundle) calls `create_export_bundle()` directly
+- Without validation, if the import fails, Cell 8 shows success but Cell 46 later fails with `NameError`
+- With validation, Cell 8 fails immediately with clear error message pointing to root cause
+
+**Defensive Checks in Usage Cells**:
+
+Cell 46 (Production Export Bundle) also includes a diagnostic check for better UX:
+
+```python
+# Cell 46 diagnostic pattern
+if 'create_export_bundle' not in dir():
+    print("❌ EXPORT BUNDLE FUNCTION NOT AVAILABLE")
+    print()
+    print("Root Cause: Cell 8 (Import Infrastructure) was not executed or failed")
+    print()
+    print("Solution:")
+    print("  1. Scroll up to Cell 8 (Import v3.6 training infrastructure)")
+    print("  2. Run Cell 8")
+    print("  3. Verify you see: '✅ Training infrastructure loaded'")
+    print("  4. Verify: 'Validated: 17 components imported successfully'")
+    print("  5. Return here and re-run this cell (Cell 46)")
+    raise NameError(
+        "create_export_bundle not defined. Run Cell 8 (Import Infrastructure) first."
+    )
+```
+
+**Benefits**:
+- ✅ **Fail-fast**: Errors caught at import time, not usage time
+- ✅ **Clear root cause**: Error message points to Cell 8, not Cell 46
+- ✅ **Actionable guidance**: Users know exactly which cell to run
+- ✅ **No false positives**: Cell 8 won't show success if imports failed
+
+**Testing**: See `scripts/test_cell_08_imports.py` for integration tests validating this architecture.
+
 ### Notebook Structure (`template.ipynb`)
 
 The Colab notebook follows a strict cell organization pattern:
