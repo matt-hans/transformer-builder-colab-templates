@@ -372,6 +372,21 @@ print(f"Val Loss: {results['val_loss_history'][-1]:.4f}")
 - Logs to ExperimentDB
 - Provides results in same format as `Trainer.train()`
 
+**Load Model Weights Cell** (training.ipynb Cell 34):
+- Loads `model_state_dict` from checkpoint into model
+- Displays available checkpoints with metrics
+- Defaults to Cell 33's checkpoint selection if available
+- Auto-selects best checkpoint by val_loss otherwise
+- Migrates model to GPU if available
+- Sets model to eval() mode (ready for inference)
+- Shows comprehensive info (checkpoint metadata, model summary, architecture preview)
+- Provides error handling for architecture mismatches
+
+**Variable Extraction Cell** (training.ipynb Cell 35):
+- Extracts `workspace_root`, `run_name`, `metrics_df` from results dict
+- Works for both training (Cell 32) and recovery (Cell 33) workflows
+- Always prints extraction status for verification
+
 **What's Saved in Checkpoints** (automatic):
 - Full metrics history (`metrics_tracker.metrics_history`)
 - Model state dict
