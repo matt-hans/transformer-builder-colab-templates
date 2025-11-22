@@ -119,15 +119,7 @@ def get_filter_for_task(task_type: str) -> DataQualityFilter:
     Returns:
         DataQualityFilter configured for the task
     """
-    # Map task types to minimum sequence lengths
-    TASK_MIN_SEQ_LEN = {
-        'lm': 2,
-        'causal_lm': 2,
-        'language_modeling': 2,
-        'seq2seq': 2,
-        'classification': 1,
-        'text_classification': 1,
-    }
+    from utils.training.constants import TASK_MIN_SEQ_LEN
 
     min_seq_len = TASK_MIN_SEQ_LEN.get(task_type, 1)
     return DataQualityFilter(min_seq_len=min_seq_len)
