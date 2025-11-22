@@ -152,6 +152,90 @@ results = trainer.train(train_data, val_data)
 - Data module selection
 - Hyperparameter search strategies
 
+### Data Quality Validation Architecture (v4.0)
+
+**Three-Layer Validation Strategy** for robust training data quality:
+
+#### Layer 1: Preprocessing Validation (Fail-Fast)
+**Where**: `training.ipynb` Cell 22 (before training starts)
+**Purpose**: Catch dataset quality issues before GPU allocation
+**Performance**: 1× filter (runs once during preprocessing)
+
+```python
+from utils.training.validation import SequenceLengthValidator
+from utils.training.data_quality import filter_short_sequences
+
+# Step 1: Validate dataset quality
+validator = SequenceLengthValidator(
+    min_seq_len=2,  # For causal LM
+    max_filter_rate=0.20  # Permissive for WikiText-like datasets
+)
+
+result = validator.validate(train_data)
+if not result.passed:
+    raise ValueError(result.message)
+
+# Step 2: Filter short sequences
+train_data = filter_short_sequences(train_data, min_length=2)
+val_data = filter_short_sequences(val_data, min_length=2)
+```
+
+**Key Features:**
+- Statistical sampling (1000 examples) for performance
+- Dataset-level thresholds (statistically valid)
+- Fail-fast error messages with remediation steps
+- Works with HuggingFace datasets, PyTorch datasets, and lists
+
+#### Layer 2: Trainer Validation (Pre-Training)
+**Where**: `utils/training/engine/trainer.py:796-889` (`_validate_data_quality()`)
+**Purpose**: Verify preprocessing wasn't skipped
+**Performance**: Samples first 10 batches only
+
+```python
+# Automatic - called by Trainer before training loop
+trainer = Trainer(model, config, training_config, task_spec, tokenizer=tokenizer)
+results = trainer.train(train_data, val_data)
+# Raises ValueError if >1% sequences are too short
+```
+
+**Detection Logic:**
+- Samples first 10 batches (early detection)
+- Strict threshold: >1% short sequences = preprocessing skipped
+- Clear error messages guiding users to Layer 1 filtering
+
+#### Layer 3: Collator Safety Net (Runtime)
+**Where**: `utils/tokenization/data_collator.py:101-108` (`LanguageModelingDataCollator`)
+**Purpose**: Minimal empty batch check only
+**Performance**: Negligible overhead
+
+```python
+# Automatic - part of DataLoader collation
+# Only checks for completely empty batches (should never happen)
+```
+
+**Architecture Benefits:**
+- **49x speedup**: Preprocessing (1× filter) vs Runtime (12,500× filter)
+- **Statistical validity**: Dataset-level thresholds vs unreliable batch-level
+- **Single Responsibility**: Collator only batches, doesn't validate
+- **Fail-fast**: Errors caught before GPU allocation
+
+**Centralized Constants:**
+```python
+from utils.training.constants import TASK_MIN_SEQ_LEN
+
+# Task-specific minimum sequence lengths
+TASK_MIN_SEQ_LEN = {
+    'lm': 2,                    # Causal LM (token shifting requirement)
+    'classification': 1,         # Classification (single token valid)
+    'vision_classification': 0,  # Vision (no text sequences)
+}
+```
+
+**See also:**
+- `docs/plans/2025-11-21-validation-layer-implementation.md` - Full architecture design
+- `tests/validation/test_performance.py` - Performance benchmarks
+- `tests/validation/test_integration.py` - Integration tests
+
 ### Training Pipeline Features (v3.5, v3.6, v4.0)
 
 **For comprehensive training documentation, see `NEW_API_QUICK_REFERENCE.md`.**
